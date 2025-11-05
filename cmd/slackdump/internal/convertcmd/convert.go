@@ -8,9 +8,11 @@ import (
 	"os"
 	"time"
 
+	"github.com/rusq/slackdump/v3/source"
+
+	"github.com/rusq/slackdump/v3/cmd/slackdump/internal/bootstrap"
 	"github.com/rusq/slackdump/v3/cmd/slackdump/internal/cfg"
 	"github.com/rusq/slackdump/v3/cmd/slackdump/internal/golang/base"
-	"github.com/rusq/slackdump/v3/internal/source"
 )
 
 //go:embed assets/convert.md
@@ -22,7 +24,7 @@ var CmdConvert = &base.Command{
 	Short:       "convert slackdump chunks to various formats",
 	Long:        convertMd,
 	CustomFlags: false,
-	FlagMask:    cfg.OmitAll & ^cfg.OmitDownloadFlag &^ cfg.OmitOutputFlag &^ cfg.OmitDownloadAvatarsFlag,
+	FlagMask:    cfg.OmitAll & ^cfg.OmitWithFilesFlag &^ cfg.OmitOutputFlag &^ cfg.OmitWithAvatarsFlag,
 	PrintFlags:  true,
 }
 
@@ -86,6 +88,10 @@ func runConvert(ctx context.Context, cmd *base.Command, args []string) error {
 	}
 	lg := cfg.Log
 	lg.InfoContext(ctx, "converting", "source", args[0], "output_format", params.outputfmt)
+
+	if err := bootstrap.AskOverwrite(cfg.Output); err != nil {
+		return err
+	}
 
 	// set from the global config
 	params.includeFiles = cfg.WithFiles

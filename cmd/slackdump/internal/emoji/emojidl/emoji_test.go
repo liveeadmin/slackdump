@@ -60,7 +60,7 @@ func Test_fetchEmoji(t *testing.T) {
 	}{
 		{
 			"ok",
-			args{context.Background(), "test", "file", "/somepath/file.png"},
+			args{t.Context(), "test", "file", "/somepath/file.png"},
 			serverOptions{status: http.StatusOK, body: []byte("test data")},
 			false,
 			true,
@@ -68,7 +68,7 @@ func Test_fetchEmoji(t *testing.T) {
 		},
 		{
 			"gif",
-			args{context.Background(), "test", "file", "/somepath/file.gif"},
+			args{t.Context(), "test", "file", "/somepath/file.gif"},
 			serverOptions{status: http.StatusOK, body: []byte("test data")},
 			false,
 			true,
@@ -76,7 +76,7 @@ func Test_fetchEmoji(t *testing.T) {
 		},
 		{
 			"404",
-			args{context.Background(), "test", "file", "/somepath/file.png"},
+			args{t.Context(), "test", "file", "/somepath/file.png"},
 			serverOptions{status: http.StatusNotFound, body: nil},
 			true,
 			true,
@@ -150,7 +150,7 @@ func Test_worker(t *testing.T) {
 		{
 			"all ok",
 			args{
-				ctx:    context.Background(),
+				ctx:    t.Context(),
 				emojiC: testEmojiC([]edge.Emoji{{Name: "test", URL: "passed"}}, true),
 			},
 			func(ctx context.Context, fsa fsadapter.FS, dir string, name string, uri string) error {
@@ -163,7 +163,7 @@ func Test_worker(t *testing.T) {
 		{
 			"cancelled context",
 			args{
-				ctx:    func() context.Context { ctx, cancel := context.WithCancel(context.Background()); cancel(); return ctx }(),
+				ctx:    func() context.Context { ctx, cancel := context.WithCancel(t.Context()); cancel(); return ctx }(),
 				emojiC: testEmojiC([]edge.Emoji{}, false),
 			},
 			func(ctx context.Context, fsa fsadapter.FS, dir string, name string, uri string) error {
@@ -176,7 +176,7 @@ func Test_worker(t *testing.T) {
 		{
 			"fetch error",
 			args{
-				ctx:    context.Background(),
+				ctx:    t.Context(),
 				emojiC: testEmojiC([]edge.Emoji{{Name: "test", URL: "passed"}}, true),
 			},
 			func(ctx context.Context, fsa fsadapter.FS, dir string, name string, uri string) error {
@@ -227,7 +227,7 @@ func Test_fetch(t *testing.T) {
 		return nil
 	})
 
-	err := fetch(context.Background(), fsa, emojis, true, nil)
+	err := fetch(t.Context(), fsa, emojis, true, nil)
 	if err != nil {
 		t.Errorf("unexpected error: %s", err)
 	}
@@ -258,9 +258,9 @@ func Test_download(t *testing.T) {
 	tmpdir := t.TempDir()
 
 	type args struct {
-		ctx      context.Context
-		output   string
-		failFast bool
+		ctx    context.Context
+		output string
+		opts   *Options
 	}
 	tests := []struct {
 		name    string
@@ -272,14 +272,17 @@ func Test_download(t *testing.T) {
 		{
 			"save to directory",
 			args{
-				ctx:      context.Background(),
-				output:   tmpdir,
-				failFast: true,
+				ctx:    t.Context(),
+				output: tmpdir,
+				opts: &Options{
+					FailFast:  true,
+					WithFiles: true,
+				},
 			},
 			emptyFetchFn,
 			func(m *MockEmojiDumper) {
 				m.EXPECT().
-					DumpEmojis(gomock.Any()).
+					GetEmojiContext(gomock.Any()).
 					Return(map[string]string{
 						"test": "https://blahblah.png",
 					}, nil)
@@ -289,14 +292,17 @@ func Test_download(t *testing.T) {
 		{
 			"save to zip file",
 			args{
-				ctx:      context.Background(),
-				output:   filepath.Join(tmpdir, "test.zip"),
-				failFast: true,
+				ctx:    t.Context(),
+				output: filepath.Join(tmpdir, "test.zip"),
+				opts: &Options{
+					FailFast:  true,
+					WithFiles: true,
+				},
 			},
 			emptyFetchFn,
 			func(m *MockEmojiDumper) {
 				m.EXPECT().
-					DumpEmojis(gomock.Any()).
+					GetEmojiContext(gomock.Any()).
 					Return(map[string]string{
 						"test": "https://blahblah.png",
 					}, nil)
@@ -306,14 +312,17 @@ func Test_download(t *testing.T) {
 		{
 			"fails on fetch error with fail fast",
 			args{
-				ctx:      context.Background(),
-				output:   tmpdir,
-				failFast: true,
+				ctx:    t.Context(),
+				output: tmpdir,
+				opts: &Options{
+					FailFast:  true,
+					WithFiles: true,
+				},
 			},
 			errorFetchFn,
 			func(m *MockEmojiDumper) {
 				m.EXPECT().
-					DumpEmojis(gomock.Any()).
+					GetEmojiContext(gomock.Any()).
 					Return(map[string]string{
 						"test": "https://blahblah.png",
 					}, nil)
@@ -323,14 +332,17 @@ func Test_download(t *testing.T) {
 		{
 			"fails on DumpEmojis error",
 			args{
-				ctx:      context.Background(),
-				output:   tmpdir,
-				failFast: false,
+				ctx:    t.Context(),
+				output: tmpdir,
+				opts: &Options{
+					FailFast:  false,
+					WithFiles: true,
+				},
 			},
 			errorFetchFn,
 			func(m *MockEmojiDumper) {
 				m.EXPECT().
-					DumpEmojis(gomock.Any()).
+					GetEmojiContext(gomock.Any()).
 					Return(nil, errors.New("no emojis for you, it's 1991."))
 			},
 			true,
@@ -346,7 +358,7 @@ func Test_download(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer fs.Close()
-			if err := DlFS(tt.args.ctx, sess, fs, tt.args.failFast, nil); (err != nil) != tt.wantErr {
+			if err := DlFS(tt.args.ctx, sess, fs, tt.args.opts, nil); (err != nil) != tt.wantErr {
 				t.Errorf("download() error = %v, wantErr %v", err, tt.wantErr)
 			}
 		})

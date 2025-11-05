@@ -3,7 +3,11 @@ package viewer
 import (
 	"context"
 	"embed"
+	"encoding/json"
+	"fmt"
 	"html/template"
+	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/rusq/slack"
@@ -19,8 +23,10 @@ func initTemplates(v *Viewer) {
 		template.FuncMap{
 			"rendername":      v.um.ChannelName,
 			"is_app_msg":      isAppMsg,
+			"is_user_msg":     isUserMsg,
 			"displayname":     v.um.DisplayName,
 			"username":        v.username, // username returns the username for the message
+			"userpic":         v.userpic,  // userpic returns the userpic for the user
 			"time":            localtime,
 			"rendertext":      func(s string) string { return v.r.RenderText(context.Background(), s) },            // render message text
 			"render":          func(m slack.Message) template.HTML { return v.r.Render(context.Background(), &m) }, // render message
@@ -52,9 +58,7 @@ func msgsender(m slack.Message) sender {
 		if m.Username != "" {
 			return sApp
 		}
-		if m.BotProfile != nil && m.BotProfile.Name != "" {
-			return sBot
-		}
+		return sBot
 	}
 	if m.User != "" {
 		return sUser
@@ -62,12 +66,46 @@ func msgsender(m slack.Message) sender {
 	return sUnknown
 }
 
-func (v *Viewer) username(m slack.Message) string {
+func dump(a any) string {
+	var buf strings.Builder
+	enc := json.NewEncoder(&buf)
+	enc.SetIndent("", "  ")
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(a); err != nil {
+		return fmt.Sprintf("error: %v", err)
+	}
+	return buf.String()
+}
+
+const emptyAvatar = "/static/48x48.gif"
+
+func (v *Viewer) userpic(userID string) string {
+	if userID == "" {
+		return emptyAvatar
+	}
+	user, ok := v.um[userID]
+	if ok && user.Profile.Image48 != "" {
+		return user.Profile.Image48
+	}
+	slog.Debug("userpic not found", "user", userID)
+
+	return emptyAvatar
+}
+
+func (v *Viewer) username(m slack.Message) (name string) {
 	switch msgsender(m) {
 	case sUser:
 		return v.um.DisplayName(m.User)
 	case sBot:
-		return v.um.DisplayName(m.User) + " via " + m.BotProfile.Name + " (bot)"
+		name := m.BotID
+		if m.BotProfile != nil {
+			name = m.BotProfile.Name
+		}
+		user := "Unknown user"
+		if m.User != "" {
+			user = v.um.DisplayName(m.User)
+		}
+		return user + " via " + name + " (bot)"
 	case sApp:
 		return m.Username + " (app)"
 	case sUnknown:
@@ -78,5 +116,10 @@ func (v *Viewer) username(m slack.Message) string {
 }
 
 func isAppMsg(m slack.Message) bool {
-	return msgsender(m) == sApp
+	sender := msgsender(m)
+	return sender == sApp || sender == sBot
+}
+
+func isUserMsg(m slack.Message) bool {
+	return msgsender(m) == sUser
 }
