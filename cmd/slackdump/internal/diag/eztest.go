@@ -1,3 +1,18 @@
+// Copyright (c) 2021-2026 Rustam Gilyazov and Contributors.
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU Affero General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU Affero General Public License for more details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 package diag
 
 import (
@@ -11,9 +26,9 @@ import (
 	"github.com/playwright-community/playwright-go"
 
 	"github.com/rusq/slack"
-	"github.com/rusq/slackdump/v3/auth"
-	"github.com/rusq/slackdump/v3/cmd/slackdump/internal/cfg"
-	"github.com/rusq/slackdump/v3/cmd/slackdump/internal/golang/base"
+	"github.com/rusq/slackdump/v4/auth"
+	"github.com/rusq/slackdump/v4/cmd/slackdump/internal/cfg"
+	"github.com/rusq/slackdump/v4/cmd/slackdump/internal/golang/base"
 )
 
 var cmdEzTest = &base.Command{
@@ -110,13 +125,13 @@ func tryPlaywrightAuth(ctx context.Context, wsp string, populateCreds bool) ezRe
 	var ret = ezResult{Engine: "playwright"}
 
 	if err := playwright.Install(&playwright.RunOptions{Browsers: []string{"firefox"}}); err != nil {
-		ret.Err = ptr(fmt.Sprintf("playwright installation error: %s", err))
+		ret.Err = new(fmt.Sprintf("playwright installation error: %s", err))
 		return ret
 	}
 
 	prov, err := auth.NewPlaywrightAuth(ctx, auth.BrowserWithWorkspace(wsp))
 	if err != nil {
-		ret.Err = ptr(err.Error())
+		ret.Err = new(err.Error())
 		return ret
 	}
 
@@ -129,7 +144,7 @@ func tryPlaywrightAuth(ctx context.Context, wsp string, populateCreds bool) ezRe
 		}
 		resp, err := prov.Test(ctx)
 		if err != nil {
-			ret.Err = ptr(err.Error())
+			ret.Err = new(err.Error())
 			return ret
 		}
 		ret.Response = resp
@@ -137,13 +152,14 @@ func tryPlaywrightAuth(ctx context.Context, wsp string, populateCreds bool) ezRe
 	return ret
 }
 
-func ptr[T any](t T) *T { return &t }
+//go:fix inline
+func ptr[T any](t T) *T { return new(t) }
 
 func tryRodAuth(ctx context.Context, wsp string, populateCreds bool) ezResult {
 	ret := ezResult{Engine: "rod"}
 	prov, err := auth.NewRODAuth(ctx, auth.BrowserWithWorkspace(wsp))
 	if err != nil {
-		ret.Err = ptr(err.Error())
+		ret.Err = new(err.Error())
 		return ret
 	}
 
@@ -156,7 +172,7 @@ func tryRodAuth(ctx context.Context, wsp string, populateCreds bool) ezResult {
 		}
 		resp, err := prov.Test(ctx)
 		if err != nil {
-			ret.Err = ptr(err.Error())
+			ret.Err = new(err.Error())
 			return ret
 		}
 		ret.Response = resp

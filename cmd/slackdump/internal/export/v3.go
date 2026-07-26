@@ -1,3 +1,18 @@
+// Copyright (c) 2021-2026 Rustam Gilyazov and Contributors.
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU Affero General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU Affero General Public License for more details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 package export
 
 import (
@@ -10,21 +25,21 @@ import (
 	"github.com/rusq/fsadapter"
 	"github.com/schollz/progressbar/v3"
 
-	"github.com/rusq/slackdump/v3/cmd/slackdump/internal/bootstrap"
-	"github.com/rusq/slackdump/v3/cmd/slackdump/internal/cfg"
-	"github.com/rusq/slackdump/v3/internal/chunk"
-	"github.com/rusq/slackdump/v3/internal/chunk/backend/dbase"
-	"github.com/rusq/slackdump/v3/internal/chunk/control"
-	"github.com/rusq/slackdump/v3/internal/client"
-	"github.com/rusq/slackdump/v3/internal/convert/transform"
-	"github.com/rusq/slackdump/v3/internal/convert/transform/fileproc"
-	"github.com/rusq/slackdump/v3/internal/structures"
-	"github.com/rusq/slackdump/v3/source"
-	"github.com/rusq/slackdump/v3/stream"
+	"github.com/rusq/slackdump/v4/cmd/slackdump/internal/bootstrap"
+	"github.com/rusq/slackdump/v4/cmd/slackdump/internal/cfg"
+	"github.com/rusq/slackdump/v4/internal/chunk"
+	"github.com/rusq/slackdump/v4/internal/chunk/backend/dbase"
+	"github.com/rusq/slackdump/v4/internal/chunk/control"
+	"github.com/rusq/slackdump/v4/internal/client"
+	"github.com/rusq/slackdump/v4/internal/convert/transform"
+	"github.com/rusq/slackdump/v4/internal/convert/transform/fileproc"
+	"github.com/rusq/slackdump/v4/internal/structures"
+	"github.com/rusq/slackdump/v4/source"
+	"github.com/rusq/slackdump/v4/stream"
 )
 
-// export runs the export v3.1.
-func exportv31(ctx context.Context, sess client.Slack, fsa fsadapter.FS, list *structures.EntityList, params exportFlags) error {
+// exportWithDB runs the export with the database backend.
+func exportWithDB(ctx context.Context, sess client.Slack, fsa fsadapter.FS, list *structures.EntityList, params exportFlags) error {
 	lg := cfg.Log
 
 	tmpdir, err := os.MkdirTemp("", "slackdump-*")
@@ -33,7 +48,7 @@ func exportv31(ctx context.Context, sess client.Slack, fsa fsadapter.FS, list *s
 	}
 
 	lg.InfoContext(ctx, "temporary directory in use", "tmpdir", tmpdir)
-	wconn, si, err := bootstrap.Database(tmpdir, "export")
+	wconn, si, err := bootstrap.DatabaseWithSession(tmpdir, "export")
 	if err != nil {
 		return err
 	}
@@ -44,7 +59,7 @@ func exportv31(ctx context.Context, sess client.Slack, fsa fsadapter.FS, list *s
 		return err
 	}
 	defer func() {
-		if err := tmpdbp.Close(); err != nil {
+		if err := tmpdbp.Abort(); err != nil {
 			lg.ErrorContext(ctx, "unable to close database processor", "error", err)
 		}
 	}()
@@ -66,10 +81,12 @@ func exportv31(ctx context.Context, sess client.Slack, fsa fsadapter.FS, list *s
 
 	lg.InfoContext(ctx, "running export...")
 	pb := bootstrap.ProgressBar(ctx, lg, progressbar.OptionShowCount()) // progress bar
+	defer func() { _ = pb.Finish() }()
 
 	s := stream.New(sess, cfg.Limits,
 		stream.OptOldest(time.Time(cfg.Oldest)),
 		stream.OptLatest(time.Time(cfg.Latest)),
+		stream.OptFailOnNonCritError(cfg.FailOnNonCritical),
 		stream.OptResultFn(func(sr stream.Result) error {
 			lg.DebugContext(ctx, "conversations", "sr", sr.String())
 			pb.Describe(sr.String())
@@ -79,9 +96,11 @@ func exportv31(ctx context.Context, sess client.Slack, fsa fsadapter.FS, list *s
 	)
 
 	flags := control.Flags{
-		MemberOnly:   cfg.MemberOnly,
-		RecordFiles:  false, // archive format is transitory, don't need extra info.
-		ChannelUsers: cfg.OnlyChannelUsers,
+		MemberOnly:    cfg.MemberOnly,
+		RecordFiles:   false, // archive format is transitory, don't need extra info.
+		ChannelUsers:  cfg.OnlyChannelUsers,
+		ChannelTypes:  cfg.ChannelTypes,
+		IncludeLabels: cfg.IncludeCustomLabels,
 	}
 	ctr, err := control.New(
 		ctx,
@@ -99,29 +118,31 @@ func exportv31(ctx context.Context, sess client.Slack, fsa fsadapter.FS, list *s
 	defer ctr.Close()
 
 	if err := ctr.Run(ctx, list); err != nil {
-		_ = pb.Finish()
 		return err
 	}
-	_ = pb.Finish()
 	// at this point no goroutines are running, we are safe to assume that
 	// everything we need is in the chunk directory.
-	if err := conv.WriteIndex(ctx); err != nil {
-		return err
-	}
-	lg.Debug("index written")
 	if err := tf.Close(); err != nil {
 		return err
 	}
+	if err := conv.WriteIndex(ctx); err != nil {
+		return err
+	}
+	if err := ctr.Finish(); err != nil {
+		return err
+	}
+	lg.Debug("index written")
 	pb.Describe("OK")
 	lg.InfoContext(ctx, "conversations export finished")
 	lg.DebugContext(ctx, "chunk files retained", "dir", tmpdir)
 	return nil
 }
 
-// export runs the export v3.
+// exportWithDir runs the export with the chunk file directory backend.  It
+// exists as a fallback in case database backend has issues.
 //
-// Deprecated: use exportv31 instead.
-func export(ctx context.Context, sess client.Slack, fsa fsadapter.FS, list *structures.EntityList, params exportFlags) error {
+// Deprecated: use exportWithDB instead.
+func exportWithDir(ctx context.Context, sess client.Slack, fsa fsadapter.FS, list *structures.EntityList, params exportFlags) error {
 	lg := cfg.Log
 
 	tmpdir, err := os.MkdirTemp("", "slackdump-*")
@@ -156,6 +177,7 @@ func export(ctx context.Context, sess client.Slack, fsa fsadapter.FS, list *stru
 	stream := stream.New(sess, cfg.Limits,
 		stream.OptOldest(time.Time(cfg.Oldest)),
 		stream.OptLatest(time.Time(cfg.Latest)),
+		stream.OptFailOnNonCritError(cfg.FailOnNonCritical),
 		stream.OptResultFn(func(sr stream.Result) error {
 			lg.DebugContext(ctx, "conversations", "sr", sr.String())
 			pb.Describe(sr.String())
@@ -165,9 +187,11 @@ func export(ctx context.Context, sess client.Slack, fsa fsadapter.FS, list *stru
 	)
 
 	flags := control.Flags{
-		MemberOnly:   cfg.MemberOnly,
-		RecordFiles:  false, // archive format is transitory, don't need extra info.
-		ChannelUsers: cfg.OnlyChannelUsers,
+		MemberOnly:    cfg.MemberOnly,
+		RecordFiles:   false, // archive format is transitory, don't need extra info.
+		ChannelUsers:  cfg.OnlyChannelUsers,
+		IncludeLabels: cfg.IncludeCustomLabels,
+		ChannelTypes:  cfg.ChannelTypes,
 	}
 	ctr := control.NewDir(
 		chunkdir,

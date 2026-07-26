@@ -1,3 +1,18 @@
+// Copyright (c) 2021-2026 Rustam Gilyazov and Contributors.
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU Affero General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU Affero General Public License for more details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 package dbase
 
 import (
@@ -11,8 +26,8 @@ import (
 
 	"github.com/jmoiron/sqlx"
 
-	"github.com/rusq/slackdump/v3/internal/chunk"
-	"github.com/rusq/slackdump/v3/internal/chunk/backend/dbase/repository"
+	"github.com/rusq/slackdump/v4/internal/chunk"
+	"github.com/rusq/slackdump/v4/internal/chunk/backend/dbase/repository"
 )
 
 // DBP is the database processor.
@@ -22,7 +37,8 @@ type DBP struct {
 	sessionID int64
 	closed    atomic.Bool
 
-	mr repository.MessageRepository
+	mr   repository.MessageRepository
+	opts options
 }
 
 func (d *DBP) String() string {
@@ -49,7 +65,8 @@ var dbInitCommands = []string{
 }
 
 type options struct {
-	verbose bool
+	onlyNewOrChangedUsers bool
+	verbose               bool
 }
 
 func (o *options) apply(opts ...Option) {
@@ -63,6 +80,12 @@ type Option func(*options)
 func WithVerbose(v bool) Option {
 	return func(o *options) {
 		o.verbose = v
+	}
+}
+
+func WithOnlyNewOrChangedUsers(v bool) Option {
+	return func(o *options) {
+		o.onlyNewOrChangedUsers = v
 	}
 }
 
@@ -98,6 +121,7 @@ func New(ctx context.Context, conn *sqlx.DB, p SessionInfo, opts ...Option) (*DB
 		conn:      conn,
 		sessionID: id,
 		mr:        repository.NewMessageRepository(),
+		opts:      options,
 	}, nil
 }
 
@@ -111,21 +135,37 @@ func initDB(ctx context.Context, conn *sqlx.DB) error {
 	return nil
 }
 
-// Close finalises the session, marking it as finished. It is advised to check
-// the error value.
-func (d *DBP) Close() error {
+// Finish finalises the session, marking it as finished.
+func (d *DBP) Finish() error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if swapped := d.closed.CompareAndSwap(false, true); !swapped {
 		return nil
 	}
+	ctx := context.Background()
 	sr := repository.NewSessionRepository()
-	if n, err := sr.Finalise(context.Background(), d.conn, d.sessionID); err != nil && !errors.Is(err, sql.ErrNoRows) {
+	if n, err := sr.Finalise(ctx, d.conn, d.sessionID); err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return fmt.Errorf("finish: %w", err)
 	} else if n == 0 {
 		return errors.New("finish: no session found")
 	}
 	return nil
+}
+
+// Abort closes the writer without finalising the session. No additional
+// cleanup is required here because DBP does not own the database connection.
+func (d *DBP) Abort() error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if swapped := d.closed.CompareAndSwap(false, true); !swapped {
+		return nil
+	}
+	return nil
+}
+
+// Close aborts the writer without finalising the session.
+func (d *DBP) Close() error {
+	return d.Abort()
 }
 
 // Encode inserts the chunk into the database.
@@ -166,6 +206,29 @@ func (d *DBP) IsCompleteThread(ctx context.Context, channelID, threadID string) 
 	// note that count thread only parts returns non-zero for completed threads,
 	// so the check is reversed.
 	return n > 0, nil
+}
+
+// NewThreadSkipper returns a predicate suitable for stream.OptSkipThreadFunc.
+// It returns true (skip) when the DB already holds replyCount+1 messages for
+// the thread (parent message included), meaning the thread appears complete.
+// Returns false on any error so that the thread is re-fetched safely.
+//
+// CountThread is used (not CountThreadOnlyParts) intentionally: for resume we
+// want to count messages across all sessions, so a thread fully stored in any
+// prior session will be skipped correctly.
+//
+// Note: replyCount comes from the Slack API reply_count field on the parent
+// message, which may lag behind true thread state (edits/deletes not reflected).
+// This is the accepted tradeoff documented in the -skip-complete-threads flag.
+func NewThreadSkipper(conn *sqlx.DB) func(ctx context.Context, channelID, threadTS string, replyCount int) bool {
+	mr := repository.NewMessageRepository()
+	return func(ctx context.Context, channelID, threadTS string, replyCount int) bool {
+		n, err := mr.CountThread(ctx, conn, channelID, threadTS)
+		if err != nil {
+			return false
+		}
+		return n == int64(replyCount)+1
+	}
 }
 
 // Source returns the connection that can be used safely as a source.

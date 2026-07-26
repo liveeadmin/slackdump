@@ -1,3 +1,18 @@
+// Copyright (c) 2021-2026 Rustam Gilyazov and Contributors.
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU Affero General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU Affero General Public License for more details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 package renderer
 
 import (
@@ -12,10 +27,15 @@ import (
 	"github.com/rusq/slack"
 	"github.com/stretchr/testify/assert"
 
-	"github.com/rusq/slackdump/v3/internal/viewer/renderer/functions"
+	"github.com/rusq/slackdump/v4/internal/viewer/renderer/functions"
 )
 
-var tmpl = template.Must(template.New("blocks").Funcs(functions.FuncMap).ParseFS(templates, "templates/*.html"))
+var tmpl = template.Must(template.New("blocks").Funcs(functions.FuncMap).Funcs(template.FuncMap{
+	"fileurl": func(id, filename string) string {
+		return NewRoutes(ModeLive).File(id, filename)
+	},
+	"rewriteurl": func(src string) string { return src },
+}).ParseFS(templates, "templates/*.html"))
 
 func TestSlack_Render(t *testing.T) {
 	nestedLists := loadmsg(t, fxtrMsgNestedLists)
@@ -85,6 +105,22 @@ func TestSlack_Render(t *testing.T) {
 			gotV := sm.Render(t.Context(), tt.args.m)
 			assert.Equal(t, tt.wantV, gotV)
 		})
+	}
+}
+
+func TestSlack_Render_UsesRouteHelperForFiles(t *testing.T) {
+	sm := NewSlack(template.Must(template.New("base").Parse("")), WithRoutes(NewRoutes(ModeStatic)))
+	got := string(sm.Render(t.Context(), &slack.Message{Msg: slack.Msg{Files: []slack.File{{ID: "F123", Name: "hello world.txt"}}}}))
+	if !strings.Contains(got, `/files/F123/hello%20world.txt`) {
+		t.Fatalf("Render() should use static file route, got %q", got)
+	}
+}
+
+func TestSlack_Render_SanitizesStaticFileRoutes(t *testing.T) {
+	sm := NewSlack(template.Must(template.New("base").Parse("")), WithRoutes(NewRoutes(ModeStatic)))
+	got := string(sm.Render(t.Context(), &slack.Message{Msg: slack.Msg{Files: []slack.File{{ID: "F123", Name: "a/b:c.txt"}}}}))
+	if !strings.Contains(got, `/files/F123/a_b_c.txt`) {
+		t.Fatalf("Render() should sanitize static file route, got %q", got)
 	}
 }
 

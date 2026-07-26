@@ -1,3 +1,18 @@
+// Copyright (c) 2021-2026 Rustam Gilyazov and Contributors.
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU Affero General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU Affero General Public License for more details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 package repository
 
 import (
@@ -12,7 +27,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/rusq/slackdump/v3/internal/chunk"
+	"github.com/rusq/slackdump/v4/internal/chunk"
 )
 
 func Test_chunkRepository_Insert(t *testing.T) {
@@ -113,7 +128,7 @@ func TestDBChunk_Chunk(t *testing.T) {
 				TypeID:     chunk.CMessages,
 				NumRecords: 100,
 				Final:      true,
-				ChannelID:  ptr("C1234567890"),
+				ChannelID:  new("C1234567890"),
 			},
 			want: &chunk.Chunk{
 				Type:      chunk.CMessages,
@@ -133,7 +148,7 @@ func TestDBChunk_Chunk(t *testing.T) {
 				TypeID:      chunk.CSearchMessages,
 				NumRecords:  42,
 				Final:       true,
-				SearchQuery: ptr("search query"),
+				SearchQuery: new("search query"),
 			},
 			want: &chunk.Chunk{
 				Type:           chunk.CSearchMessages,
@@ -153,8 +168,8 @@ func TestDBChunk_Chunk(t *testing.T) {
 				TypeID:     chunk.CThreadMessages,
 				NumRecords: 100,
 				Final:      true,
-				ChannelID:  ptr("C1234567890"),
-				ThreadOnly: ptr(true),
+				ChannelID:  new("C1234567890"),
+				ThreadOnly: new(true),
 			},
 			want: &chunk.Chunk{
 				Type:       chunk.CThreadMessages,
@@ -175,8 +190,8 @@ func TestDBChunk_Chunk(t *testing.T) {
 				TypeID:     chunk.CThreadMessages,
 				NumRecords: 100,
 				Final:      true,
-				ChannelID:  ptr("C1234567890"),
-				ThreadOnly: ptr(false),
+				ChannelID:  new("C1234567890"),
+				ThreadOnly: new(false),
 			},
 			want: &chunk.Chunk{
 				Type:       chunk.CThreadMessages,
@@ -360,12 +375,12 @@ func TestDBChunk_values(t *testing.T) {
 				CreatedAt:   time.Date(2021, 1, 2, 3, 4, 5, 6, time.UTC),
 				TypeID:      chunk.CFiles,
 				NumRecords:  6,
-				ChannelID:   ptr("C123456789"),
+				ChannelID:   new("C123456789"),
 				SearchQuery: new(string),
 				Final:       true,
-				ThreadOnly:  ptr(true),
+				ThreadOnly:  new(true),
 			},
-			want: []any{int64(2), int64(3), chunk.CFiles, int32(6), ptr("C123456789"), ptr(""), true, ptr(true)},
+			want: []any{int64(2), int64(3), chunk.CFiles, int32(6), new("C123456789"), new(""), true, new(true)},
 		},
 	}
 	for _, tt := range tests {

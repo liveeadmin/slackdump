@@ -1,3 +1,18 @@
+// Copyright (c) 2021-2026 Rustam Gilyazov and Contributors.
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU Affero General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU Affero General Public License for more details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 package diag
 
 import (
@@ -12,12 +27,14 @@ import (
 	"net/url"
 	"os"
 
-	"github.com/rusq/chttp"
+	utls "github.com/refraction-networking/utls"
 
-	"github.com/rusq/slackdump/v3/auth"
-	"github.com/rusq/slackdump/v3/cmd/slackdump/internal/cfg"
-	"github.com/rusq/slackdump/v3/cmd/slackdump/internal/golang/base"
-	"github.com/rusq/slackdump/v3/internal/structures"
+	"github.com/rusq/chttp/v2"
+
+	"github.com/rusq/slackdump/v4/auth"
+	"github.com/rusq/slackdump/v4/cmd/slackdump/internal/cfg"
+	"github.com/rusq/slackdump/v4/cmd/slackdump/internal/golang/base"
+	"github.com/rusq/slackdump/v4/internal/structures"
 )
 
 var cmdRawOutput = &base.Command{
@@ -84,10 +101,11 @@ func run(ctx context.Context, p rawOutputParams) error {
 	if err != nil {
 		return err
 	}
-	cl, err := chttp.NewWithTransport(domain, prov.Cookies(), chttp.NewTransport(nil))
+	cl, err := chttp.New(domain, prov.Cookies(), chttp.WithUTLS(&utls.Config{}))
 	if err != nil {
 		return err
 	}
+	defer chttp.Close(cl)
 	if err := saveOutput(ctx, cl, p.output, prov.SlackToken(), sl); err != nil {
 		return err
 	}
@@ -101,16 +119,19 @@ func saveOutput(ctx context.Context, cl *http.Client, filename string, token str
 	if err != nil {
 		return err
 	}
-	defer w.Close()
 
 	log.SetOutput(w)
 	log.SetPrefix(fmt.Sprintf("*** SLACKDUMP RAW [%s]: ", sl))
 
 	if sl.IsThread() {
-		return saveThread(ctx, cl, w, token, sl)
+		err = saveThread(ctx, cl, w, token, sl)
 	} else {
-		return saveConversation(ctx, cl, w, token, sl)
+		err = saveConversation(ctx, cl, w, token, sl)
 	}
+	if closeErr := w.Close(); closeErr != nil && err == nil {
+		err = closeErr
+	}
+	return err
 }
 
 func maybeCreate(filename string) (io.WriteCloser, error) {
@@ -149,7 +170,7 @@ type apiResponse struct {
 	HasMore  bool `json:"has_more,omitempty"`
 	Metadata struct {
 		NextCursor string `json:"next_cursor,omitempty"`
-	} `json:"response_metadata,omitempty"`
+	} `json:"response_metadata"`
 }
 
 func rawDump(w io.Writer, cl *http.Client, ep string, v url.Values) error {
@@ -179,7 +200,9 @@ func sendReq(w io.Writer, cl *http.Client, ep string, v url.Values) (bool, error
 	defer resp.Body.Close()
 
 	log.Print("request headers")
-	resp.Header.Write(w)
+	if err := resp.Header.Write(w); err != nil {
+		return false, fmt.Errorf("writing response headers: %w", err)
+	}
 
 	data, err := io.ReadAll(resp.Body)
 	if err != nil {

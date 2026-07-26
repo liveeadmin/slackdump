@@ -1,3 +1,18 @@
+// Copyright (c) 2021-2026 Rustam Gilyazov and Contributors.
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU Affero General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU Affero General Public License for more details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 package source
 
 import (
@@ -10,14 +25,13 @@ import (
 	"reflect"
 	"testing"
 	"testing/fstest"
-	"time"
 
 	"github.com/rusq/slack"
 	"github.com/stretchr/testify/assert"
 
-	"github.com/rusq/slackdump/v3/internal/chunk"
-	"github.com/rusq/slackdump/v3/internal/fixtures"
-	"github.com/rusq/slackdump/v3/internal/structures"
+	"github.com/rusq/slackdump/v4/internal/chunk"
+	"github.com/rusq/slackdump/v4/internal/fixtures"
+	"github.com/rusq/slackdump/v4/internal/structures"
 )
 
 var testZipFile = filepath.Join("..", "..", "..", "tmp", "realexport.zip")
@@ -243,51 +257,6 @@ func TestExport_WorkspaceInfo(t *testing.T) {
 	}
 }
 
-func TestExport_Latest(t *testing.T) {
-	type fields struct {
-		fs        fs.FS
-		channels  []slack.Channel
-		chanNames map[string]string
-		name      string
-		idx       structures.ExportIndex
-		files     Storage
-		avatars   Storage
-	}
-	type args struct {
-		ctx context.Context
-	}
-	tests := []struct {
-		name    string
-		fields  fields
-		args    args
-		want    map[structures.SlackLink]time.Time
-		wantErr bool
-	}{
-		// TODO: Add test cases.
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			e := &Export{
-				fs:        tt.fields.fs,
-				channels:  tt.fields.channels,
-				chanNames: tt.fields.chanNames,
-				name:      tt.fields.name,
-				idx:       tt.fields.idx,
-				files:     tt.fields.files,
-				avatars:   tt.fields.avatars,
-			}
-			got, err := e.Latest(tt.args.ctx)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("Export.Latest() error = %v, wantErr %v", err, tt.wantErr)
-				return
-			}
-			if !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("Export.Latest() = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
-
 func Test_loadStorage(t *testing.T) {
 	mattermostFS := fstest.MapFS{
 		path.Join(chunk.UploadsDir, "F123456", "somefile.txt"): {
@@ -368,7 +337,7 @@ func TestExport_walkChannelMessages(t *testing.T) {
 		avatars   Storage
 	}
 	type args struct {
-		channelID string
+		name string
 	}
 	tests := []struct {
 		name    string
@@ -393,7 +362,7 @@ func TestExport_walkChannelMessages(t *testing.T) {
 				},
 			},
 			args: args{
-				channelID: "C123456",
+				name: "general",
 			},
 			want: []slack.Message{
 				{Msg: slack.Msg{Type: "message", Text: "Hello, world!"}},
@@ -415,7 +384,7 @@ func TestExport_walkChannelMessages(t *testing.T) {
 				},
 			},
 			args: args{
-				channelID: "C123456",
+				name: "general",
 			},
 			want: []slack.Message{
 				{Msg: slack.Msg{Type: "message", Text: "Hello, world!"}},
@@ -433,11 +402,7 @@ func TestExport_walkChannelMessages(t *testing.T) {
 				files:     tt.fields.files,
 				avatars:   tt.fields.avatars,
 			}
-			it, err := e.walkChannelMessages(tt.args.channelID)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("Export.walkChannelMessages() error = %v, wantErr %v", err, tt.wantErr)
-				return
-			}
+			it := e.walkChannelMessages(t.Context(), tt.args.name)
 			var got []slack.Message
 			for m, err := range it {
 				if (err != nil) != tt.wantErr {
@@ -448,6 +413,90 @@ func TestExport_walkChannelMessages(t *testing.T) {
 			}
 			if !reflect.DeepEqual(got, tt.want) {
 				t.Errorf("Export.walkChannelMessages() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestExport_nameByID(t *testing.T) {
+	type fields struct {
+		fs        fs.FS
+		channels  []slack.Channel
+		chanNames map[string]string
+		name      string
+		idx       structures.ExportIndex
+		files     Storage
+		avatars   Storage
+		cache     *threadCache
+	}
+	type args struct {
+		channelID string
+	}
+	tests := []struct {
+		name    string
+		fields  fields
+		args    args
+		want    string
+		wantErr bool
+	}{
+		{
+			name: "resolves existing channel",
+			fields: fields{
+				fs: fstest.MapFS{
+					"slackdump/": &fstest.MapFile{Mode: 0755},
+				},
+				chanNames: map[string]string{
+					"C12345": "slackdump",
+				},
+			},
+			args:    args{"C12345"},
+			want:    "slackdump",
+			wantErr: false,
+		},
+		{
+			name: "channel not in index",
+			fields: fields{
+				fs: fstest.MapFS{
+					"slackdump/": &fstest.MapFile{Mode: 0755},
+				},
+				chanNames: map[string]string{},
+			},
+			args:    args{"C12345"},
+			want:    "",
+			wantErr: true,
+		},
+		{
+			name: "channel not on the filesystem",
+			fields: fields{
+				fs: fstest.MapFS{},
+				chanNames: map[string]string{
+					"C12345": "slackdump",
+				},
+			},
+			args:    args{"C12345"},
+			want:    "",
+			wantErr: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := &Export{
+				fs:        tt.fields.fs,
+				channels:  tt.fields.channels,
+				chanNames: tt.fields.chanNames,
+				name:      tt.fields.name,
+				idx:       tt.fields.idx,
+				files:     tt.fields.files,
+				avatars:   tt.fields.avatars,
+				cache:     tt.fields.cache,
+			}
+			got, err := e.nameByID(tt.args.channelID)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("Export.nameByID() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if got != tt.want {
+				t.Errorf("Export.nameByID() = %v, want %v", got, tt.want)
 			}
 		})
 	}

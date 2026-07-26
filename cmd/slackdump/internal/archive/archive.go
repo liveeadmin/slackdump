@@ -1,3 +1,18 @@
+// Copyright (c) 2021-2026 Rustam Gilyazov and Contributors.
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU Affero General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU Affero General Public License for more details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 package archive
 
 import (
@@ -13,19 +28,20 @@ import (
 	"github.com/jmoiron/sqlx"
 	"github.com/rusq/fsadapter"
 
-	"github.com/rusq/slackdump/v3/cmd/slackdump/internal/bootstrap"
-	"github.com/rusq/slackdump/v3/cmd/slackdump/internal/cfg"
-	"github.com/rusq/slackdump/v3/cmd/slackdump/internal/golang/base"
-	"github.com/rusq/slackdump/v3/internal/chunk"
-	"github.com/rusq/slackdump/v3/internal/chunk/backend/dbase"
-	"github.com/rusq/slackdump/v3/internal/chunk/backend/dbase/repository"
-	"github.com/rusq/slackdump/v3/internal/chunk/backend/directory"
-	"github.com/rusq/slackdump/v3/internal/chunk/control"
-	"github.com/rusq/slackdump/v3/internal/client"
-	"github.com/rusq/slackdump/v3/internal/convert/transform/fileproc"
-	"github.com/rusq/slackdump/v3/internal/structures"
-	"github.com/rusq/slackdump/v3/source"
-	"github.com/rusq/slackdump/v3/stream"
+	"github.com/rusq/slackdump/v4/cmd/slackdump/internal/bootstrap"
+	"github.com/rusq/slackdump/v4/cmd/slackdump/internal/cfg"
+	"github.com/rusq/slackdump/v4/cmd/slackdump/internal/golang/base"
+	"github.com/rusq/slackdump/v4/internal/chunk"
+	"github.com/rusq/slackdump/v4/internal/chunk/backend/dbase"
+	"github.com/rusq/slackdump/v4/internal/chunk/backend/dbase/repository"
+	"github.com/rusq/slackdump/v4/internal/chunk/backend/directory"
+	"github.com/rusq/slackdump/v4/internal/chunk/control"
+	"github.com/rusq/slackdump/v4/internal/client"
+	"github.com/rusq/slackdump/v4/internal/convert/transform/fileproc"
+	"github.com/rusq/slackdump/v4/internal/structures"
+	"github.com/rusq/slackdump/v4/processor"
+	"github.com/rusq/slackdump/v4/source"
+	"github.com/rusq/slackdump/v4/stream"
 )
 
 //go:embed assets/archive.md
@@ -121,9 +137,15 @@ func runDBArchive(ctx context.Context, cmd *base.Command, args []string) error {
 	}
 	defer conn.Close()
 
-	flags := control.Flags{MemberOnly: cfg.MemberOnly, RecordFiles: cfg.RecordFiles, ChannelUsers: cfg.OnlyChannelUsers}
+	flags := control.Flags{
+		MemberOnly:    cfg.MemberOnly,
+		RecordFiles:   cfg.RecordFiles,
+		ChannelUsers:  cfg.OnlyChannelUsers,
+		IncludeLabels: cfg.IncludeCustomLabels,
+		ChannelTypes:  cfg.ChannelTypes,
+	}
 
-	ctrl, err := DBController(ctx, cmd, conn, client, dirname, flags)
+	ctrl, err := DBController(ctx, cmd.Name(), conn, client, dirname, flags, []stream.Option{})
 	if err != nil {
 		return err
 	}
@@ -134,6 +156,10 @@ func runDBArchive(ctx context.Context, cmd *base.Command, args []string) error {
 	}()
 
 	if err := ctrl.RunNoTransform(ctx, list); err != nil {
+		base.SetExitStatus(base.SApplicationError)
+		return err
+	}
+	if err := ctrl.Finish(); err != nil {
 		base.SetExitStatus(base.SApplicationError)
 		return err
 	}
@@ -157,13 +183,42 @@ func NewDirectory(name string) (*chunk.Directory, error) {
 	return cd, nil
 }
 
+type dbControllerOptions struct {
+	dbaseOptions    []dbase.Option
+	fileDeduplicate bool
+}
+
+// DBControllerOption configures the database controller.
+type DBControllerOption func(*dbControllerOptions)
+
+// WithDatabaseOptions passes options to the database backend.
+func WithDatabaseOptions(opts ...dbase.Option) DBControllerOption {
+	return func(o *dbControllerOptions) {
+		o.dbaseOptions = append(o.dbaseOptions, opts...)
+	}
+}
+
+// WithFileDeduplication skips downloading files already present in the
+// database.
+func WithFileDeduplication() DBControllerOption {
+	return func(o *dbControllerOptions) {
+		o.fileDeduplicate = true
+	}
+}
+
 // DBController returns a new database controller initialised with the given
-// parameters.
+// parameters. sessionName is recorded in the database session only and must not
+// be used to select controller behaviour.
 //
 // Obscene, just obscene amount of arguments.
-func DBController(ctx context.Context, cmd *base.Command, conn *sqlx.DB, client client.Slack, dirname string, flags control.Flags, opts ...stream.Option) (Controller, error) {
+func DBController(ctx context.Context, sessionName string, conn *sqlx.DB, client client.Slack, dirname string, flags control.Flags, streamOpts []stream.Option, opts ...DBControllerOption) (Controller, error) {
 	lg := cfg.Log
-	dbp, err := dbase.New(ctx, conn, bootstrap.SessionInfo(cmd.Name()))
+	var options dbControllerOptions
+	for _, opt := range opts {
+		opt(&options)
+	}
+
+	dbp, err := dbase.New(ctx, conn, bootstrap.SessionInfo(sessionName), options.dbaseOptions...)
 	if err != nil {
 		return nil, err
 	}
@@ -171,8 +226,9 @@ func DBController(ctx context.Context, cmd *base.Command, conn *sqlx.DB, client 
 		stream.OptLatest(time.Time(cfg.Latest)),
 		stream.OptOldest(time.Time(cfg.Oldest)),
 		stream.OptResultFn(resultLogger(lg)),
+		stream.OptFailOnNonCritError(cfg.FailOnNonCritical),
 	}
-	sopts = append(sopts, opts...)
+	sopts = append(sopts, streamOpts...)
 	// start attachment downloader
 	dl := fileproc.NewDownloader(
 		ctx,
@@ -190,11 +246,13 @@ func DBController(ctx context.Context, cmd *base.Command, conn *sqlx.DB, client 
 		lg,
 	)
 
+	filer := dbControllerFiler(dl, conn, lg, options)
+
 	ctrl, err := control.New(
 		ctx,
 		stream.New(client, cfg.Limits, sopts...),
 		dbp,
-		control.WithFiler(fileproc.New(dl)),
+		control.WithFiler(filer),
 		control.WithAvatarProcessor(fileproc.NewAvatarProc(avdl)),
 		control.WithFlags(flags),
 	)
@@ -204,12 +262,22 @@ func DBController(ctx context.Context, cmd *base.Command, conn *sqlx.DB, client 
 	return ctrl, nil
 }
 
+func dbControllerFiler(dl fileproc.Downloader, conn *sqlx.DB, lg *slog.Logger, options dbControllerOptions) processor.Filer {
+	filer := fileproc.New(dl)
+	if options.fileDeduplicate {
+		return fileproc.NewDeduplicatingFileProcessor(filer, conn, lg)
+	}
+	return filer
+}
+
 type Controller interface {
 	// Run should run the main controller loop.
 	Run(context.Context, *structures.EntityList) error
 	// RunNoTransform should run the main controller loop without
 	// enabling transformation logic.
 	RunNoTransform(context.Context, *structures.EntityList) error
+	// Finish finalises the underlying encoder on successful completion.
+	Finish() error
 
 	io.Closer
 }
@@ -223,6 +291,7 @@ func ArchiveController(ctx context.Context, cd *chunk.Directory, client client.S
 		stream.OptLatest(time.Time(cfg.Latest)),
 		stream.OptOldest(time.Time(cfg.Oldest)),
 		stream.OptResultFn(resultLogger(lg)),
+		stream.OptFailOnNonCritError(cfg.FailOnNonCritical),
 	}
 	sopts = append(sopts, opts...)
 
@@ -245,12 +314,20 @@ func ArchiveController(ctx context.Context, cd *chunk.Directory, client client.S
 
 	erc := directory.NewERC(cd, lg)
 
+	flags := control.Flags{
+		MemberOnly:    cfg.MemberOnly,
+		RecordFiles:   cfg.RecordFiles,
+		ChannelUsers:  cfg.OnlyChannelUsers,
+		IncludeLabels: cfg.IncludeCustomLabels,
+		ChannelTypes:  cfg.ChannelTypes,
+	}
+
 	ctrl, err := control.New(
 		ctx,
 		stream.New(client, cfg.Limits, sopts...),
 		erc,
 		control.WithLogger(lg),
-		control.WithFlags(control.Flags{MemberOnly: cfg.MemberOnly, RecordFiles: cfg.RecordFiles, ChannelUsers: cfg.OnlyChannelUsers}),
+		control.WithFlags(flags),
 		control.WithFiler(fileproc.New(dl)),
 		control.WithAvatarProcessor(fileproc.NewAvatarProc(avdl)),
 	)

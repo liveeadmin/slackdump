@@ -1,9 +1,25 @@
+// Copyright (c) 2021-2026 Rustam Gilyazov and Contributors.
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU Affero General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU Affero General Public License for more details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 package slackdump
 
 import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"runtime/trace"
 	"time"
@@ -13,10 +29,12 @@ import (
 	"github.com/rusq/fsadapter"
 	"github.com/rusq/slack"
 
-	"github.com/rusq/slackdump/v3/auth"
-	"github.com/rusq/slackdump/v3/internal/client"
-	"github.com/rusq/slackdump/v3/internal/network"
-	"github.com/rusq/slackdump/v3/stream"
+	st "github.com/rusq/slackdump/v4/internal/structures"
+
+	"github.com/rusq/slackdump/v4/auth"
+	"github.com/rusq/slackdump/v4/internal/client"
+	"github.com/rusq/slackdump/v4/internal/network"
+	"github.com/rusq/slackdump/v4/stream"
 )
 
 //go:generate mockgen -destination internal/mocks/mock_os/mock_os.go os FileInfo
@@ -24,10 +42,10 @@ import (
 // Session stores basic session parameters.  Zero value is not usable, must be
 // initialised with New.
 type Session struct {
-	client client.SlackClienter // client is the Slack client to use for API calls.
-	uc     *usercache           // usercache contains the list of users.
-	fs     fsadapter.FS         // filesystem adapter
-	log    *slog.Logger         // logger
+	client client.Slack // client is the Slack client to use for API calls.
+	uc     *usercache   // usercache contains the list of users.
+	fs     fsadapter.FS // filesystem adapter
+	log    *slog.Logger // logger
 
 	wspInfo *WorkspaceInfo // workspace info
 
@@ -40,10 +58,10 @@ type WorkspaceInfo = slack.AuthTestResponse
 // ErrNoUserCache is returned when the user cache is not initialised.
 var ErrNoUserCache = errors.New("user cache unavailable")
 
-// AllChanTypes enumerates all API-supported channel [types] as of 03/2023.
+// AllChanTypes enumerates all API-supported channel [types] as of 12/2025.
 //
 // [types]: https://api.slack.com/methods/conversations.list#arg_types
-var AllChanTypes = []string{"mpim", "im", "public_channel", "private_channel"}
+var AllChanTypes = []string{st.CMPIM, st.CIM, st.CPublic, st.CPrivate}
 
 // Option is the signature of the option-setting function.
 type Option func(*Session)
@@ -91,7 +109,7 @@ func WithUserCacheRetention(d time.Duration) Option {
 }
 
 // WithSlackClient sets the Slack client to use for the session.  If this
-func WithSlackClient(cl client.SlackClienter) Option {
+func WithSlackClient(cl client.Slack) Option {
 	return func(s *Session) {
 		s.client = cl
 	}
@@ -165,13 +183,29 @@ func (s *Session) initClient(ctx context.Context, prov auth.Provider, forceEdge 
 	return s.initWorkspaceInfo(ctx, s.client)
 }
 
-// Client returns the underlying slack.Client.
-func (s *Session) Client() *slack.Client {
-	cl, ok := s.client.Client()
+// ErrNotAClient is returned by Client() when the underlying client is not a
+// slack.Client.
+var ErrNotAClient = errors.New("programming error: underlying client is not a slack.Client")
+
+// Client returns the underlying slack.Client. If the underlying client does
+// not wrap a *slack.Client, ErrNotAClient is returned.
+func (s *Session) Client() (*slack.Client, error) {
+	cl, ok := s.client.(*client.Client)
 	if !ok {
-		panic("client is not a slack.Client")
+		return nil, ErrNotAClient
 	}
-	return cl
+	return cl.Client, nil
+}
+
+// Close releases resources owned by the session client when it is closable.
+func (s *Session) Close() error {
+	if s == nil || s.client == nil {
+		return nil
+	}
+	if cl, ok := s.client.(io.Closer); ok {
+		return cl.Close()
+	}
+	return nil
 }
 
 // CurrentUserID returns the user ID of the authenticated user.
@@ -201,7 +235,7 @@ func (s *Session) Info() *WorkspaceInfo {
 	return s.wspInfo
 }
 
-// Stream streams the channel, calling proc functions for each chunk.
+// Stream returns the new data streamer with the current session parameters.
 func (s *Session) Stream(opts ...stream.Option) *stream.Stream {
 	return stream.New(s.client, s.cfg.limits, opts...)
 }

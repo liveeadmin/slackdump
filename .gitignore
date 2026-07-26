@@ -28,6 +28,8 @@ __debug_bin
 *.yml
 *.yaml
 *.toml
+!cmd/slackdump/internal/mcp/assets/layouts/**/*.json
+!cmd/slackdump/internal/mcp/assets/layouts/**/*.toml
 json/*
 examples/*
 experiments/*
@@ -71,3 +73,7 @@ debug.test*
 *.pprof
 *.prof
 *.pf
+
+# Dolt database files (added by bd init)
+.dolt/
+.mcp.json

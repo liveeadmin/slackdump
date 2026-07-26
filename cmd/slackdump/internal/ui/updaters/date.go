@@ -1,3 +1,18 @@
+// Copyright (c) 2021-2026 Rustam Gilyazov and Contributors.
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU Affero General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU Affero General Public License for more details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 package updaters
 
 import (
@@ -8,9 +23,9 @@ import (
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/rusq/slackdump/v3/cmd/slackdump/internal/ui"
-	"github.com/rusq/slackdump/v3/cmd/slackdump/internal/ui/bubbles/btime"
-	"github.com/rusq/slackdump/v3/cmd/slackdump/internal/ui/bubbles/datepicker"
+	"github.com/rusq/slackdump/v4/cmd/slackdump/internal/ui"
+	"github.com/rusq/slackdump/v4/cmd/slackdump/internal/ui/bubbles/btime"
+	"github.com/rusq/slackdump/v4/cmd/slackdump/internal/ui/bubbles/datepicker"
 )
 
 type DateModel struct {
@@ -27,26 +42,37 @@ type DateModel struct {
 }
 
 func NewDTTM(ptrTime *time.Time) DateModel {
+	theme := ui.DefaultTheme()
 	m := datepicker.New(*ptrTime)
-	m.Styles = datepicker.Styles{
-		HeaderPad:    lipgloss.NewStyle().Padding(1, 0, 0),
-		DatePad:      lipgloss.NewStyle().Padding(0, 1, 1),
-		HeaderText:   lipgloss.NewStyle().Bold(true),
-		Text:         lipgloss.NewStyle().Foreground(lipgloss.Color("247")),
-		SelectedText: lipgloss.NewStyle().Bold(true),
-		FocusedText:  lipgloss.NewStyle().Foreground(lipgloss.Color("212")).Bold(true),
-	}
+	m.Styles = dateStyles(theme, true)
 	t := btime.New(m.Time)
 	m.SelectDate()
 	return DateModel{
 		Value:       ptrTime,
 		dm:          m,
 		tm:          t,
-		focusstyle:  ui.DefaultTheme().Focused.Border,
-		blurstyle:   ui.DefaultTheme().Blurred.Border,
+		focusstyle:  theme.Focused.Border,
+		blurstyle:   theme.Blurred.Border,
 		keymap:      defaultDateKeymap(),
 		timeEnabled: true,
-		help:        help.New(),
+		help:        ui.NewHelp(),
+	}
+}
+
+func dateStyles(theme ui.Theme, focused bool) datepicker.Styles {
+	text := theme.Blurred.Text
+	selectedText := theme.Blurred.Options.SelectedName
+	if focused {
+		text = theme.Focused.Text
+		selectedText = theme.Focused.Options.SelectedName
+	}
+	return datepicker.Styles{
+		HeaderPad:    lipgloss.NewStyle().Padding(1, 0, 0),
+		DatePad:      lipgloss.NewStyle().Padding(0, 1, 1),
+		HeaderText:   lipgloss.NewStyle().Bold(true),
+		Text:         text,
+		SelectedText: selectedText,
+		FocusedText:  selectedText,
 	}
 }
 
@@ -61,12 +87,12 @@ type dateKeymap struct {
 
 func defaultDateKeymap() dateKeymap {
 	return dateKeymap{
-		NextField: key.NewBinding(key.WithKeys("tab"), key.WithHelp("↹", "next")),
-		PrevField: key.NewBinding(key.WithKeys("shift+tab"), key.WithHelp("⇧ + ↹", "prev")),
-		Arrows:    key.NewBinding(key.WithKeys("esc", "ctrl+c", "q"), key.WithHelp("←↑↓→", "move")),
-		Select:    key.NewBinding(key.WithKeys("enter"), key.WithHelp("↵", "select")),
-		Cancel:    key.NewBinding(key.WithKeys("esc", "ctrl+c", "q"), key.WithHelp("Esc", "cancel")),
-		Clear:     key.NewBinding(key.WithKeys("backspace"), key.WithHelp("backspace", "clear")),
+		NextField: key.NewBinding(key.WithKeys("tab"), key.WithHelp(ui.KeyTab, "next")),
+		PrevField: key.NewBinding(key.WithKeys("shift+tab"), key.WithHelp(ui.KeyShiftTab, "prev")),
+		Arrows:    key.NewBinding(key.WithKeys("up", "down", "left", "right", "h", "j", "k", "l"), key.WithHelp(ui.KeyArrows, "move")),
+		Select:    key.NewBinding(key.WithKeys("enter"), key.WithHelp(ui.KeyEnter, "select")),
+		Cancel:    key.NewBinding(key.WithKeys("esc", "ctrl+c", "q"), key.WithHelp(ui.KeyQuitAll, "cancel")),
+		Clear:     key.NewBinding(key.WithKeys("backspace"), key.WithHelp(ui.KeyBack, "clear")),
 	}
 }
 
@@ -174,13 +200,17 @@ func (m DateModel) View() string {
 	}
 
 	if m.timeEnabled {
+		dm := m.dm
+		dm.Styles = dateStyles(ui.DefaultTheme(), m.state == scalendar)
 		b.WriteString(lipgloss.JoinVertical(
 			lipgloss.Center,
-			dateStyle.Render(m.dm.View()),
+			dateStyle.Render(dm.View()),
 			timeStyle.Render(m.tm.View()),
 		))
 	} else {
-		b.WriteString(dateStyle.Render(m.dm.View()))
+		dm := m.dm
+		dm.Styles = dateStyles(ui.DefaultTheme(), true)
+		b.WriteString(dateStyle.Render(dm.View()))
 	}
 	return lipgloss.JoinVertical(lipgloss.Left, b.String(), help)
 }

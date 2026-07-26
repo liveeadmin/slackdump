@@ -12,15 +12,17 @@ func _() {
 	_ = x[Fexport-1]
 	_ = x[Fchunk-2]
 	_ = x[Fdatabase-3]
+	_ = x[Fhtml-4]
 }
 
-const _datafmt_name = "dumpexportchunkdatabase"
+const _datafmt_name = "dumpexportchunkdatabasehtml"
 
-var _datafmt_index = [...]uint8{0, 4, 10, 15, 23}
+var _datafmt_index = [...]uint8{0, 4, 10, 15, 23, 27}
 
 func (i datafmt) String() string {
-	if i >= datafmt(len(_datafmt_index)-1) {
+	idx := int(i) - 0
+	if i < 0 || idx >= len(_datafmt_index)-1 {
 		return "datafmt(" + strconv.FormatInt(int64(i), 10) + ")"
 	}
-	return _datafmt_name[_datafmt_index[i]:_datafmt_index[i+1]]
+	return _datafmt_name[_datafmt_index[idx]:_datafmt_index[idx+1]]
 }

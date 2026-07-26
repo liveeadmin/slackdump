@@ -1,5 +1,21 @@
+// Copyright (c) 2021-2026 Rustam Gilyazov and Contributors.
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU Affero General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU Affero General Public License for more details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 // Package convert implements conversions to different Slackdump formats.  It
 // is a layer on top of the transformer.
+
 package convert
 
 import (
@@ -8,11 +24,12 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/rusq/slackdump/v3/source"
+	"github.com/rusq/slackdump/v4/internal/structures"
+	"github.com/rusq/slackdump/v4/source"
 
 	"github.com/rusq/slack"
 
-	"github.com/rusq/slackdump/v3/internal/convert/transform"
+	"github.com/rusq/slackdump/v4/internal/convert/transform"
 )
 
 // Target is the interface for writing the target format.
@@ -41,6 +58,8 @@ type options struct {
 	trgFileLoc func(*slack.Channel, *slack.File) string
 	// avtrFileLoc should return the avatar file location.
 	avtrFileLoc func(*slack.User) string
+	// dmMode controls how single-member IMs are serialized into dms.json.
+	dmMode structures.DMMode
 	// lg is the logger
 	lg *slog.Logger
 }
@@ -79,6 +98,15 @@ func WithLogger(lg *slog.Logger) Option {
 	return func(c *options) {
 		if lg != nil {
 			c.lg = lg
+		}
+	}
+}
+
+// WithDMMode sets the DM serialization mode for export conversion.
+func WithDMMode(mode structures.DMMode) Option {
+	return func(c *options) {
+		if mode != "" {
+			c.dmMode = mode
 		}
 	}
 }

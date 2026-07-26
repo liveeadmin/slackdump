@@ -1,3 +1,18 @@
+// Copyright (c) 2021-2026 Rustam Gilyazov and Contributors.
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU Affero General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU Affero General Public License for more details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 package dbase
 
 import (
@@ -12,10 +27,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"go.uber.org/mock/gomock"
 
-	"github.com/rusq/slackdump/v3/internal/chunk"
-	"github.com/rusq/slackdump/v3/internal/chunk/backend/dbase/repository"
-	"github.com/rusq/slackdump/v3/internal/chunk/backend/dbase/repository/mock_repository"
-	"github.com/rusq/slackdump/v3/internal/testutil"
+	"github.com/rusq/slackdump/v4/internal/chunk"
+	"github.com/rusq/slackdump/v4/internal/chunk/backend/dbase/repository"
+	"github.com/rusq/slackdump/v4/internal/chunk/backend/dbase/repository/mock_repository"
+	"github.com/rusq/slackdump/v4/internal/testutil"
 )
 
 // testDB returns a test database with the schema applied.
@@ -129,7 +144,7 @@ func TestNew(t *testing.T) {
 	}
 }
 
-func TestDBP_Close(t *testing.T) {
+func TestDBP_Finish(t *testing.T) {
 	type fields struct {
 		conn      *sqlx.DB
 		sessionID int64
@@ -178,8 +193,8 @@ func TestDBP_Close(t *testing.T) {
 				conn:      tt.fields.conn,
 				sessionID: tt.fields.sessionID,
 			}
-			if err := d.Close(); (err != nil) != tt.wantErr {
-				t.Errorf("DBP.Close() error = %v, wantErr %v", err, tt.wantErr)
+			if err := d.Finish(); (err != nil) != tt.wantErr {
+				t.Errorf("DBP.Finish() error = %v, wantErr %v", err, tt.wantErr)
 			}
 			if tt.checkFn != nil {
 				tt.checkFn(t, tt.fields.conn)
@@ -187,7 +202,7 @@ func TestDBP_Close(t *testing.T) {
 		})
 	}
 	// special cases not covered by the above tests
-	t.Run("closed", func(t *testing.T) {
+	t.Run("finished", func(t *testing.T) {
 		d := &DBP{
 			conn:      testDB(t),
 			sessionID: 1,
@@ -197,10 +212,10 @@ func TestDBP_Close(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := d.Close(); err != nil {
+		if err := d.Finish(); err != nil {
 			t.Fatal(err)
 		}
-		if err := d.Close(); err != nil {
+		if err := d.Finish(); err != nil {
 			t.Fatal(err)
 		}
 	})
@@ -209,7 +224,7 @@ func TestDBP_Close(t *testing.T) {
 			conn:      testDB(t),
 			sessionID: 1,
 		}
-		if err := d.Close(); err == nil {
+		if err := d.Finish(); err == nil {
 			t.Fatal("expected error")
 		}
 	})
@@ -218,8 +233,44 @@ func TestDBP_Close(t *testing.T) {
 			conn:      testutil.TestDB(t),
 			sessionID: 1,
 		}
-		if err := d.Close(); err == nil {
+		if err := d.Finish(); err == nil {
 			t.Fatal("expected error")
+		}
+	})
+}
+
+func TestDBP_Close(t *testing.T) {
+	t.Run("aborts without finalising session", func(t *testing.T) {
+		conn := testDB(t)
+		prepSession(t, conn)
+
+		d := &DBP{
+			conn:      conn,
+			sessionID: 1,
+		}
+		if err := d.Close(); err != nil {
+			t.Fatal(err)
+		}
+
+		var count int
+		if err := conn.QueryRowxContext(t.Context(), "SELECT COUNT(*) FROM session WHERE id = 1 and finished = false").Scan(&count); err != nil {
+			t.Fatal(err)
+		}
+		if count != 1 {
+			t.Errorf("session unexpectedly finalised")
+		}
+	})
+
+	t.Run("close is idempotent", func(t *testing.T) {
+		d := &DBP{
+			conn:      testDB(t),
+			sessionID: 1,
+		}
+		if err := d.Close(); err != nil {
+			t.Fatal(err)
+		}
+		if err := d.Close(); err != nil {
+			t.Fatal(err)
 		}
 	})
 }

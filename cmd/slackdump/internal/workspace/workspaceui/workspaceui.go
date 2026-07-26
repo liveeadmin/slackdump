@@ -1,3 +1,18 @@
+// Copyright (c) 2021-2026 Rustam Gilyazov and Contributors.
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU Affero General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU Affero General Public License for more details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 package workspaceui
 
 import (
@@ -7,15 +22,15 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/huh"
 
-	"github.com/rusq/slackdump/v3/auth"
-	"github.com/rusq/slackdump/v3/cmd/slackdump/internal/cfg"
-	"github.com/rusq/slackdump/v3/cmd/slackdump/internal/golang/base"
-	"github.com/rusq/slackdump/v3/cmd/slackdump/internal/ui/bubbles/menu"
-	"github.com/rusq/slackdump/v3/cmd/slackdump/internal/ui/cfgui"
-	"github.com/rusq/slackdump/v3/cmd/slackdump/internal/ui/updaters"
-	"github.com/rusq/slackdump/v3/cmd/slackdump/internal/workspace/wspcfg"
-	"github.com/rusq/slackdump/v3/internal/cache"
-	"github.com/rusq/slackdump/v3/internal/osext"
+	"github.com/rusq/slackdump/v4/auth"
+	"github.com/rusq/slackdump/v4/cmd/slackdump/internal/cfg"
+	"github.com/rusq/slackdump/v4/cmd/slackdump/internal/golang/base"
+	"github.com/rusq/slackdump/v4/cmd/slackdump/internal/ui/bubbles/menu"
+	"github.com/rusq/slackdump/v4/cmd/slackdump/internal/ui/cfgui"
+	"github.com/rusq/slackdump/v4/cmd/slackdump/internal/ui/updaters"
+	"github.com/rusq/slackdump/v4/cmd/slackdump/internal/workspace/wspcfg"
+	"github.com/rusq/slackdump/v4/internal/cache"
+	"github.com/rusq/slackdump/v4/internal/osext"
 )
 
 //go:generate mockgen -package workspaceui -destination=test_mock_manager.go -source workspaceui.go manager
@@ -217,6 +232,12 @@ func configuration() cfgui.Configuration {
 					Value:       wspcfg.RODUserAgent,
 					Updater:     updaters.NewString(&wspcfg.RODUserAgent, "", false, nil),
 				},
+				{
+					Name:        "Force Bundled Browser",
+					Description: "Use the launcher-managed bundled Chromium instead of a system browser for interactive login.",
+					Value:       cfgui.Checkbox(wspcfg.BundledBrowser),
+					Updater:     updaters.NewBool(&wspcfg.BundledBrowser),
+				},
 			},
 		},
 	}
@@ -227,6 +248,13 @@ func cacheOptions() cfgui.Configuration {
 		{
 			Name: "Cache Manager Options",
 			Params: []cfgui.Parameter{
+				{
+					Name:        "Cache Directory",
+					Description: "Directory where workspace cache files are stored.",
+					Inline:      true,
+					Value:       cfg.LocalCacheDir,
+					Updater:     updaters.NewString(&cfg.LocalCacheDir, cfg.CacheDir(), false, osext.DirExists),
+				},
 				{
 					Name:        "Machine ID Override",
 					Description: "Override the machine ID used for encryption.",

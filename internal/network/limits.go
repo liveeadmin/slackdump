@@ -1,3 +1,18 @@
+// Copyright (c) 2021-2026 Rustam Gilyazov and Contributors.
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU Affero General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU Affero General Public License for more details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 package network
 
 import (
@@ -14,13 +29,13 @@ type Limits struct {
 	// going to retry
 	DownloadRetries int `json:"download_retries,omitempty" yaml:"download_retries,omitempty" toml:"download_retries,omitempty"`
 	// Tier-2 limits
-	Tier2 TierLimit `json:"tier_2,omitempty" yaml:"tier_2,omitempty" toml:"tier_2,omitempty"`
+	Tier2 TierLimit `json:"tier_2" yaml:"tier_2,omitempty" toml:"tier_2,omitempty"`
 	// Tier-3 limits
-	Tier3 TierLimit `json:"tier_3,omitempty" yaml:"tier_3,omitempty" toml:"tier_3,omitempty"`
+	Tier3 TierLimit `json:"tier_3" yaml:"tier_3,omitempty" toml:"tier_3,omitempty"`
 	// Tier-4 limits
-	Tier4 TierLimit `json:"tier_4,omitempty" yaml:"tier_4,omitempty" toml:"tier_4,omitempty"`
+	Tier4 TierLimit `json:"tier_4" yaml:"tier_4,omitempty" toml:"tier_4,omitempty"`
 	// Request Limits
-	Request RequestLimit `json:"per_request,omitempty" yaml:"per_request,omitempty" toml:"per_request,omitempty"`
+	Request RequestLimit `json:"per_request" yaml:"per_request,omitempty" toml:"per_request,omitempty"`
 }
 
 // TierLimit represents a Slack API Tier limits.
@@ -53,9 +68,9 @@ var DefLimits = Limits{
 		Retries: 20, // see issue #28, sometimes slack is being difficult
 	},
 	Tier3: TierLimit{
-		Boost:   60, // slack being greedy lately.
-		Burst:   5,  // safe value, who would ever want to modify it? I don't know.
-		Retries: 3,  // on Tier 3 this was never a problem, even with limiter-boost=120
+		Boost:   120, // slack being greedy lately.
+		Burst:   5,   // safe value, who would ever want to modify it? I don't know.
+		Retries: 3,   // on Tier 3 this was never a problem, even with limiter-boost=120
 	},
 	Tier4: TierLimit{
 		Boost:   10,

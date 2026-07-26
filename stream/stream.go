@@ -1,20 +1,36 @@
+// Copyright (c) 2021-2026 Rustam Gilyazov and Contributors.
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU Affero General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU Affero General Public License for more details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+// Package stream provides entity streaming functions.
 package stream
 
 import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"runtime/trace"
-	"sync"
 	"time"
 
 	"github.com/rusq/slack"
 	"golang.org/x/time/rate"
 
-	"github.com/rusq/slackdump/v3/internal/client"
-	"github.com/rusq/slackdump/v3/internal/network"
-	"github.com/rusq/slackdump/v3/internal/structures"
-	"github.com/rusq/slackdump/v3/processor"
+	"github.com/rusq/slackdump/v4/internal/client"
+	"github.com/rusq/slackdump/v4/internal/network"
+	"github.com/rusq/slackdump/v4/internal/structures"
+	"github.com/rusq/slackdump/v4/processor"
 )
 
 const (
@@ -38,35 +54,18 @@ type Stream struct {
 	client         client.Slack
 	limits         rateLimits
 	chanCache      *chanCache
+	userCache      *userCache
 	fastSearch     bool
 	inclusive      bool
+	failChnlNotFnd bool // if true, will fail if channel not found
 	resultFn       []func(sr Result) error
-}
-
-// chanCache is used to cache channel info to avoid fetching it multiple times.
-type chanCache struct {
-	m sync.Map
-}
-
-// get returns the channel info from the cache.  If it fails to find it, it
-// returns nil.
-func (c *chanCache) get(key string) *slack.Channel {
-	v, ok := c.m.Load(key)
-	if !ok {
-		return nil
-	}
-	return v.(*slack.Channel)
-}
-
-// set sets the channel info in the cache under the respective key.
-func (c *chanCache) set(key string, ch *slack.Channel) {
-	c.m.Store(key, ch)
+	skipThread     func(ctx context.Context, channelID, threadTS string, replyCount int) bool
 }
 
 // ResultType helps to identify the type of the result, so that the callback
 // function can handle it appropriately.
 //
-//go:generate stringer -type=ResultType -trimprefix=RT
+//go:generate go tool stringer -type=ResultType -trimprefix=RT
 type ResultType int8
 
 const (
@@ -171,6 +170,26 @@ func OptInclusive(b bool) Option {
 	}
 }
 
+// OptFailOnNonCritError enables or disables detection and special treatment of
+// channel_not_found Slack errors.  If disabled, non-existing channels and channels
+// that user is not part of
+func OptFailOnNonCritError(b bool) Option {
+	return func(cs *Stream) {
+		cs.failChnlNotFnd = b
+	}
+}
+
+// OptSkipThreadFunc sets a predicate that is called for each thread head message
+// during channel processing and after the first replies page for direct thread
+// requests.  If it returns true, the thread is skipped.  Returns false on any
+// error (safe default: re-fetch the thread).  Intended for resume operations to
+// skip threads already complete in the database.
+func OptSkipThreadFunc(fn func(ctx context.Context, channelID, threadTS string, replyCount int) bool) Option {
+	return func(cs *Stream) {
+		cs.skipThread = fn
+	}
+}
+
 // New creates a new Stream instance that allows to stream different slack
 // entities.
 func New(cl client.Slack, l network.Limits, opts ...Option) *Stream {
@@ -178,6 +197,7 @@ func New(cl client.Slack, l network.Limits, opts ...Option) *Stream {
 		client:    cl,
 		limits:    limits(l),
 		chanCache: new(chanCache),
+		userCache: new(userCache),
 		inclusive: true,
 	}
 	for _, opt := range opts {
@@ -228,18 +248,52 @@ func (cs *Stream) Users(ctx context.Context, proc processor.Users, opt ...slack.
 	return p.Failure(errors.Unwrap(apiErr))
 }
 
-// TODO: test this.
-func (cs *Stream) ListChannels(ctx context.Context, proc processor.Channels, p *slack.GetConversationsParameters) error {
-	ctx, task := trace.NewTask(ctx, "Channels")
+var (
+	ErrOpNotSupported = errors.New("client doesn't support this operation")
+)
+
+// channelsExer is a narrow interface satisfied by *client.Client when an edge
+// (enterprise) connection is available.
+type channelsExer interface {
+	GetConversationsContextEx(ctx context.Context, params *slack.GetConversationsParameters, onlyMy bool) (channels []slack.Channel, nextCursor string, err error)
+}
+
+// ListChannelsEx is an extended version of ListChannels that uses extended
+// calls in an attempt to make the operation faster. If the underlying client
+// does not support extended methods, it will return [ErrOpNotSupported] error.
+func (cs *Stream) ListChannelsEx(ctx context.Context, proc processor.Channels, p *slack.GetConversationsParameters, onlyMy bool) error {
+	ctx, task := trace.NewTask(ctx, "ListChannelsEx")
 	defer task.End()
 
+	ex, ok := cs.client.(channelsExer)
+	if !ok {
+		return ErrOpNotSupported
+	}
+
+	return cs.listChannels(ctx, proc, p, func(ctx context.Context, p *slack.GetConversationsParameters) ([]slack.Channel, string, error) {
+		ch, cursor, err := ex.GetConversationsContextEx(ctx, p, onlyMy)
+		if errors.Is(err, client.ErrOpNotSupported) {
+			return nil, "", ErrOpNotSupported
+		}
+		return ch, cursor, err
+	})
+}
+
+// ListChannels calls processor for each batch of channels received from the API.
+func (cs *Stream) ListChannels(ctx context.Context, proc processor.Channels, p *slack.GetConversationsParameters) error {
+	ctx, task := trace.NewTask(ctx, "ListChannels")
+	defer task.End()
+	return cs.listChannels(ctx, proc, p, cs.client.GetConversationsContext)
+}
+
+func (cs *Stream) listChannels(ctx context.Context, proc processor.Channels, p *slack.GetConversationsParameters, fn func(context.Context, *slack.GetConversationsParameters) ([]slack.Channel, string, error)) error {
 	var next string
 	for {
 		p.Cursor = next
 		var ch []slack.Channel
 		if err := network.WithRetry(ctx, cs.limits.channels, cs.limits.tier.Tier3.Retries, func(ctx context.Context) error {
 			var err error
-			ch, next, err = cs.client.GetConversationsContext(ctx, p)
+			ch, next, err = fn(ctx, p)
 			return err
 		}); err != nil {
 			return fmt.Errorf("API error: %w", err)
@@ -263,8 +317,8 @@ func (cs *Stream) ListChannels(ctx context.Context, proc processor.Channels, p *
 	return nil
 }
 
-// Users processes all users in the workspace, calling proc for each batch of
-// users returned by the API.
+// UsersBulk processes all users in the workspace, calling proc for each batch
+// of users returned by the API.
 func (cs *Stream) UsersBulk(ctx context.Context, proc processor.Users, ids ...string) error {
 	ctx, task := trace.NewTask(ctx, "UsersBulk")
 	defer task.End()
@@ -290,3 +344,84 @@ func (cs *Stream) UsersBulk(ctx context.Context, proc processor.Users, ids ...st
 	}
 	return nil
 }
+
+// UsersBulkWithCustom returns the information for the users with ids and
+// fetches custom profile fields.  If includeLabels is true, it will fetch the
+// custom profile field names.
+func (cs *Stream) UsersBulkWithCustom(ctx context.Context, proc processor.Users, includeLabels bool, ids ...string) error {
+	return cs.UsersBulkWithCustomErr(ctx, proc, includeLabels, ids, nil)
+}
+
+// UsersBulkWithCustomErr returns the information for the users with ids and
+// fetches custom profile fields.  failErr controls handling of user lookup
+// errors: returning true stops processing and returns the error; returning
+// false skips that user.  A nil failErr fails on every error.
+func (cs *Stream) UsersBulkWithCustomErr(ctx context.Context, proc processor.Users, includeLabels bool, ids []string, failErr func(error) bool) error {
+	ctx, task := trace.NewTask(ctx, "UsersBulkWithCustomErr")
+	defer task.End()
+
+	uu := make([]slack.User, 0, len(ids))
+	for _, id := range ids {
+		if id == "" {
+			// some messages may have empty user IDs.
+			continue
+		}
+
+		var profileC = make(chan *slack.UserProfile, 1)
+		go func() {
+			defer close(profileC)
+			var profile *slack.UserProfile
+			// we ignore any errors, if we don't get extended information, we still have the basic from the GetUser call.
+			err := network.WithRetry(ctx, cs.limits.userinfo, cs.limits.tier.Tier4.Retries, func(ctx context.Context) error {
+				var err error
+				profile, err = cs.client.GetUserProfileContext(ctx, &slack.GetUserProfileParameters{
+					UserID:        id,
+					IncludeLabels: includeLabels,
+				})
+				return err
+			})
+			if err != nil {
+				slog.DebugContext(ctx, "profile fetch error", "error", err)
+			}
+			select {
+			case profileC <- profile:
+			case <-ctx.Done():
+				return
+			}
+		}()
+
+		var u *slack.User
+		if err := network.WithRetry(ctx, cs.limits.userinfo, cs.limits.tier.Tier4.Retries, func(ctx context.Context) error {
+			var err error
+			u, err = cs.client.GetUserInfoContext(ctx, id)
+			return err
+		}); err != nil {
+			<-profileC // discard
+			wrappedErr := userLookupError{id: id, err: err}
+			if failErr == nil || failErr(wrappedErr) {
+				return wrappedErr
+			}
+			continue
+		}
+		if profile := <-profileC; profile != nil {
+			u.Profile = *profile
+		}
+
+		uu = append(uu, *u)
+	}
+	if err := proc.Users(ctx, uu); err != nil {
+		return err
+	}
+	return nil
+}
+
+type userLookupError struct {
+	id  string
+	err error
+}
+
+func (e userLookupError) Error() string {
+	return fmt.Sprintf("error fetching user with ID %s: %v", e.id, e.err)
+}
+func (e userLookupError) Unwrap() error  { return e.err }
+func (e userLookupError) UserID() string { return e.id }

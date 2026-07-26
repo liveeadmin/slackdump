@@ -1,3 +1,18 @@
+// Copyright (c) 2021-2026 Rustam Gilyazov and Contributors.
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU Affero General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU Affero General Public License for more details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 package convertcmd
 
 import (
@@ -9,12 +24,12 @@ import (
 	"github.com/jmoiron/sqlx"
 	"github.com/rusq/fsadapter"
 
-	"github.com/rusq/slackdump/v3/cmd/slackdump/internal/bootstrap"
-	"github.com/rusq/slackdump/v3/cmd/slackdump/internal/cfg"
-	"github.com/rusq/slackdump/v3/internal/chunk"
-	"github.com/rusq/slackdump/v3/internal/chunk/backend/dbase"
-	"github.com/rusq/slackdump/v3/internal/convert"
-	"github.com/rusq/slackdump/v3/source"
+	"github.com/rusq/slackdump/v4/cmd/slackdump/internal/bootstrap"
+	"github.com/rusq/slackdump/v4/cmd/slackdump/internal/cfg"
+	"github.com/rusq/slackdump/v4/internal/chunk"
+	"github.com/rusq/slackdump/v4/internal/chunk/backend/dbase"
+	"github.com/rusq/slackdump/v4/internal/convert"
+	"github.com/rusq/slackdump/v4/source"
 )
 
 // toDatabase converts the source to the database format.
@@ -45,7 +60,6 @@ func dbConvertFast(ctx context.Context, src, trg string, cflg convertflags) erro
 	dsrc := source.OpenChunkDir(cd, true)
 	defer dsrc.Close()
 
-	trg = cfg.StripZipExt(trg)
 	if err := chunk2db(ctx, dsrc, trg, cflg); err != nil {
 		return err
 	}
@@ -82,7 +96,7 @@ func chunk2db(ctx context.Context, src *source.ChunkDir, dir string, cflg conver
 	slog.Info("output", "database", filepath.Join(dir, source.DefaultDBFile))
 
 	// create a new database
-	wconn, si, err := bootstrap.Database(dir, "convert")
+	wconn, si, err := bootstrap.DatabaseWithSession(dir, "convert")
 	if err != nil {
 		return err
 	}
@@ -92,7 +106,7 @@ func chunk2db(ctx context.Context, src *source.ChunkDir, dir string, cflg conver
 	if err != nil {
 		return err
 	}
-	defer dbp.Close()
+	defer dbp.Abort()
 
 	txx, err := wconn.BeginTxx(ctx, nil)
 	if err != nil {
@@ -105,6 +119,9 @@ func chunk2db(ctx context.Context, src *source.ChunkDir, dir string, cflg conver
 		return err
 	}
 	if err := txx.Commit(); err != nil {
+		return err
+	}
+	if err := dbp.Finish(); err != nil {
 		return err
 	}
 
@@ -131,8 +148,6 @@ func dbConvert(ctx context.Context, src, dir string, cflg convertflags) error {
 	}
 	defer s.Close()
 
-	dir = cfg.StripZipExt(dir)
-
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
@@ -147,7 +162,7 @@ func dbConvert(ctx context.Context, src, dir string, cflg convertflags) error {
 	defer fsa.Close()
 
 	// create a new database
-	wconn, si, err := bootstrap.Database(dir, "convert")
+	wconn, si, err := bootstrap.DatabaseWithSession(dir, "convert")
 	if err != nil {
 		return err
 	}
@@ -157,7 +172,7 @@ func dbConvert(ctx context.Context, src, dir string, cflg convertflags) error {
 	if err != nil {
 		return err
 	}
-	defer dbp.Close()
+	defer dbp.Abort()
 
 	txx, err := wconn.BeginTxx(ctx, nil)
 	if err != nil {
@@ -181,6 +196,9 @@ func dbConvert(ctx context.Context, src, dir string, cflg convertflags) error {
 		return err
 	}
 	if err := txx.Commit(); err != nil {
+		return err
+	}
+	if err := dbp.Finish(); err != nil {
 		return err
 	}
 

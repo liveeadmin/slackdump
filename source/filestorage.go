@@ -1,3 +1,18 @@
+// Copyright (c) 2021-2026 Rustam Gilyazov and Contributors.
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU Affero General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU Affero General Public License for more details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 package source
 
 import (
@@ -11,7 +26,7 @@ import (
 
 	"github.com/rusq/slack"
 
-	"github.com/rusq/slackdump/v3/internal/chunk"
+	"github.com/rusq/slackdump/v4/internal/chunk"
 )
 
 const (
@@ -138,6 +153,19 @@ func (r *STMattermost) File(id string, name string) (string, error) {
 	return "", fs.ErrNotExist
 }
 
+// FileByID returns the path of any file with the given ID, regardless of name.
+// It globs for the first file under the ID subdirectory.
+func (r *STMattermost) FileByID(id string) (string, error) {
+	matches, err := fs.Glob(r.fs, path.Join(id, "*"))
+	if err != nil {
+		return "", err
+	}
+	if len(matches) == 0 {
+		return "", fs.ErrNotExist
+	}
+	return matches[0], nil
+}
+
 func (r *STMattermost) FilePath(_ *slack.Channel, f *slack.File) string {
 	return MattermostFilepath(nil, f)
 }
@@ -238,6 +266,11 @@ func (r *STStandard) File(id string, name string) (string, error) {
 	return pth, nil
 }
 
+// FileByID returns the path of the file with the given ID.
+func (r *STStandard) FileByID(id string) (string, error) {
+	return r.File(id, "")
+}
+
 type fakefs struct{}
 
 func (fakefs) Open(name string) (fs.File, error) {
@@ -256,6 +289,10 @@ func (NoStorage) Type() StorageType {
 }
 
 func (NoStorage) File(id string, name string) (string, error) {
+	return "", fs.ErrNotExist
+}
+
+func (NoStorage) FileByID(id string) (string, error) {
 	return "", fs.ErrNotExist
 }
 
@@ -374,6 +411,11 @@ func (r *STDump) File(id string, name string) (string, error) {
 	return "", fs.ErrNotExist
 }
 
+// FileByID returns the path of the file with the given ID.
+func (r *STDump) FileByID(id string) (string, error) {
+	return r.File(id, "")
+}
+
 type AvatarStorage struct {
 	fs fs.FS
 }
@@ -415,6 +457,11 @@ func (r *AvatarStorage) File(userID string, imageOriginalBase string) (string, e
 		return "", err
 	}
 	return pth, nil
+}
+
+// FileByID is not meaningful for AvatarStorage; it always returns fs.ErrNotExist.
+func (r *AvatarStorage) FileByID(id string) (string, error) {
+	return "", fs.ErrNotExist
 }
 
 // FilePath is unused on AvatarStorage.

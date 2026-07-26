@@ -1,3 +1,18 @@
+// Copyright (c) 2021-2026 Rustam Gilyazov and Contributors.
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU Affero General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU Affero General Public License for more details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 // Package edge provides a limited implementation of undocumented Slack Edge
 // API necessary to get the data from a slack workspace.
 //
@@ -14,15 +29,16 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
-	"os"
 	"runtime/trace"
 	"strings"
 	"time"
 
+	"github.com/rusq/chttp/v2"
 	"github.com/rusq/slack"
 	"github.com/rusq/slackauth"
-	"github.com/rusq/slackdump/v3/auth"
 	"github.com/rusq/tagops"
+
+	"github.com/rusq/slackdump/v4/auth"
 )
 
 type Client struct {
@@ -39,6 +55,12 @@ type Client struct {
 	teamID string
 	tape   io.WriteCloser
 }
+
+const (
+	// integer boolean values used in forms
+	iFalse = iota
+	iTrue
+)
 
 type Option func(*Client)
 
@@ -60,18 +82,18 @@ func NewWithClient(workspaceName string, teamID string, token string, cl *http.C
 	if token == "" {
 		return nil, ErrNoToken
 	}
-	tape, err := os.Create("tape.txt")
-	if err != nil {
-		return nil, err
-	}
-	return &Client{
+	c := &Client{
 		cl:           cl,
 		token:        token,
 		teamID:       teamID,
 		webclientAPI: fmt.Sprintf("https://%s.slack.com/api/", workspaceName),
 		edgeAPI:      fmt.Sprintf("https://edgeapi.slack.com/cache/%s/", teamID),
-		tape:         tape,
-	}, nil
+		tape:         nopTape{},
+	}
+	for _, o := range opt {
+		o(c)
+	}
+	return c, nil
 }
 
 func NewWithToken(ctx context.Context, token string, cookies []*http.Cookie) (*Client, error) {
@@ -130,10 +152,14 @@ func (cl *Client) Raw() *http.Client {
 }
 
 func (cl *Client) Close() error {
+	var err error
 	if cl.tape != nil {
-		return cl.tape.Close()
+		err = errors.Join(err, cl.tape.Close())
 	}
-	return nil
+	if cl.cl != nil {
+		err = errors.Join(err, chttp.Close(cl.cl))
+	}
+	return err
 }
 
 type BaseRequest struct {
@@ -143,7 +169,7 @@ type BaseRequest struct {
 type baseResponse struct {
 	Ok               bool             `json:"ok"`
 	Error            string           `json:"error,omitempty"`
-	ResponseMetadata ResponseMetadata `json:"response_metadata,omitempty"`
+	ResponseMetadata ResponseMetadata `json:"response_metadata"`
 }
 
 func (r baseResponse) validate(ep string) error {

@@ -11,15 +11,32 @@ files and emojis.  Generate Slack Export without admin privileges.
 - [Join the discussion in Telegram](https://t.me/slackdump).
 - [Buy me a cup of tea](https://ko-fi.com/rusq_), or use **GitHub Sponsors**
   button on the top of the page.
-- [![Go reference](https://pkg.go.dev/badge/github.com/rusq/slackdump/v3.svg)][godoc]
+- [![Go reference](https://pkg.go.dev/badge/github.com/rusq/slackdump/v4.svg)][godoc]
+- [Using with AI Agents (MCP Server)](#slackdump-mcp-server)
+- [Slack MCP Server (no permissions required)](https://github.com/korotovsky/slack-mcp-server)
+- [Github CLI Slackdump extension](https://github.com/wham/gh-slackdump)
 - How to's:
 
   - [Mattermost migration][mmost] steps
   - [SlackLogViewerとSlackdumpを一緒に使用する](https://kenkyu-note.hatenablog.com/entry/2022/09/02/090949)
   - [v1 Overview on Medium.com](https://medium.com/@gilyazov/downloading-your-private-slack-conversations-52e50428b3c2)  (outdated)
 
-[godoc]: https://pkg.go.dev/github.com/rusq/slackdump/v3/
-[mmost]: doc/usage-export.rst
+[godoc]: https://pkg.go.dev/github.com/rusq/slackdump/v4/
+[mmost]: doc/usage-export.md
+[ug]: doc/README.md
+
+
+> [!WARNING]
+> # Enterprise Workspaces Security Alerts
+>
+> Depending on your Slack plan and security settings, using Slackdump may
+> trigger Slack security alerts and/or notify workspace administrators of
+> unusual or automated access/scraping attempts.
+> 
+> You are responsible for ensuring your use complies with your organisation’s
+> policies and Slack’s terms of service.
+>
+> **See [Enterprise Workspace Tips](doc/enterprise.md).**
 
 ## Description
 
@@ -27,23 +44,32 @@ Typical use scenarios:
 
 * archive your private conversations from Slack when the administrator
   does not allow you to install applications OR you don't want to use
-  potentially privacy-violating third-party tools,
-* archive channels from Slack when you're on a free "no archive" subscription,
-  so you don't lose valuable knowledge in those channels,
-* create a Slack Export archive without admin access, or
-* save your favourite emojis.
+  potentially privacy-violating third-party tools;
+* archive channels from Slack when you're on a free "no archive" subscription;
+  so you don't lose valuable knowledge in those channels;
+* create a Slack Export archive without admin access;
+* create incremental Slack archives, which is particularly useful for free
+  workspaces with 90-day limits;
+* save your favourite emojis; AND
+* analyse you Slack data with AI Agent using [Slackdump MCP Server](#slackdump-mcp-server).
 
 There are several modes of operation
 
 1. List users/channels
 1. Dumping messages and threads
 1. Creating a Slack Export in Mattermost or Standard modes.
-1. Creating an Archive
+1. Creating an Archive (Sqlite database or stored as json+gz)
+1. Converting an archive to other formats (Export, Dump).
 1. Emoji download mode.
-1. Viewing export, dump or archive files or directories (displays images).
+1. Viewing Slack export, dump or archive files or directories (displays images).
 1. Search mode (messages and files).
+1. Resuming previous archive (adding new messages to an existing archive).
+1. Local MCP Server to use with Opencode, Claude, or any other AI tool
+   supporting mcp over STDIO or HTTP.
+1. Database tools: merge multiple archives, remove duplicates, and clean up
+   unfinished sessions (`slackdump tools merge/dedupe/cleanup`).
 
-Run `slackdump help` to see all available options:
+Run `slackdump help` to see all available options.
 
 ## Installation and Quickstart
 
@@ -84,11 +110,9 @@ On other Operating Systems, please follow these steps:
 - Quickstart guide: `slackdump help quickstart`, read [online][man-quickstart].
 - Generic command overview: `man ./slackdump.1`
 - [Ez-Login 3000](https://github.com/rusq/slackdump/wiki/EZ-Login-3000) Guide.
-- V2 to V3 migration notes: `slackdump help v2migrate`, read [online][man-v2migrate].
-- What's new in V3: `slackdump help whatsnew`, read [online][man-changelog].
+- What's new in V4: `slackdump help whatsnew`, read [online][man-changelog].
 
 [man-quickstart]: https://github.com/rusq/slackdump/blob/master/cmd/slackdump/internal/man/assets/quickstart.md
-[man-v2migrate]: https://github.com/rusq/slackdump/blob/master/cmd/slackdump/internal/man/assets/v2migr.md
 [man-changelog]: https://github.com/rusq/slackdump/blob/master/cmd/slackdump/internal/man/assets/changelog.md
 
 ## Running Slackdump from a Repo Checkout
@@ -133,11 +157,15 @@ The built-in viewer supports all types of dumps:
 1. Slackdump Archive format;
 1. Standard and Mattermost Slack Export;
 1. Dump mode files
-  
-The built-in viewer is experimental, any contributions to make it better looking are welcome.
 
-Alternatively, you can use one of the following tools to preview the
-export results:
+  
+You can also convert your output file to a browsable static HTML archive:
+
+```bash
+slackdump convert -f html -o my_html_archive <zip or directory>
+```
+
+or use one of the following tools to preview the export results:
 
 - [SlackLogViewer] - a fast and powerful Slack Export viewer written in C++, works on Export files (images won't be displayed, unless you used an export token flag).
 - [Slackdump2Html] - a great Python application that converts Slack Dump to a
@@ -149,13 +177,56 @@ export results:
 [Slackdump2Html]: https://github.com/kununu/slackdump2html
 [slack-export-viewer]: https://github.com/hfaran/slack-export-viewer
 
+# Slackdump MCP server
+
+Slackdump offers a read-only MCP server with the following features:
+- analyse the data in the archive (any type)
+- provide help with command line flags
+
+Available MCP tools:
+
+| Tool | Description |
+|------|-------------|
+| `load_source` | Open (or switch to) a Slackdump archive at runtime |
+| `list_channels` | List all channels in the archive |
+| `get_channel` | Get detailed info for a channel by ID |
+| `list_users` | List all users/members |
+| `get_messages` | Read messages from a channel (paginated) |
+| `get_thread` | Read all replies in a thread |
+| `get_workspace_info` | Workspace/team metadata |
+| `command_help` | Get CLI flag help for any slackdump subcommand |
+
+The server supports both **stdio** (agent-managed) and **HTTP** transports.
+
+### Quick project setup
+
+Scaffold a ready-to-use project directory pre-configured for your AI tool:
+
+```shell
+slackdump mcp -new opencode   ~/my-slack-project   # OpenCode
+slackdump mcp -new claude-code ~/my-slack-project  # Claude Code
+slackdump mcp -new copilot    ~/my-slack-project   # VS Code / GitHub Copilot
+slackdump mcp -new codex      ~/my-slack-project   # Codex
+```
+
+Each command creates the MCP config file and installs bundled Slackdump skill /
+instruction files so the agent knows how to work with your archive out of the box.
+
+To learn how to set it up with Codex, Claude Desktop, VS Code/GitHub Copilot,
+or OpenCode, see:
+```
+slackdump help mcp
+```
+or refer to the [Slackdump MCP command help page][mcp-doc].
+
+[mcp-doc]:  https://github.com/rusq/slackdump/blob/master/cmd/slackdump/internal/mcp/assets/mcp.md
 
 ## Using as a library
 
 Download:
 
 ```shell
-go get github.com/rusq/slackdump/v3
+go get github.com/rusq/slackdump/v4
 ```
 
 
@@ -168,8 +239,8 @@ import (
   "context"
   "log"
 
-  "github.com/rusq/slackdump/v2"
-  "github.com/rusq/slackdump/v2/auth"
+  "github.com/rusq/slackdump/v4"
+  "github.com/rusq/slackdump/v4/auth"
 )
 
 func main() {
@@ -246,6 +317,8 @@ suggested a feature, helped to reproduce, or spent time chatting with me on
 the Telegram or Slack to help to understand the problem or feature and tested
 the proposed solution.
 
+See CONTRIBUTORS.md for the full list of contributors.
+
 Also, I'd like to thank current sponsors:
 
 - [<img class="avatar avatar-user" src="https://avatars.githubusercontent.com/u/9138285?s=60&amp;v=4" width="30" height="30" alt="@malsatin">](https://github.com/malsatin) @malsatin
@@ -262,6 +335,10 @@ supporting the project:
 - Emin G.
 - Robert Z.
 - Sudhanshu J.
+
+## License
+
+Slackdump is licensed under the [GNU Affero General Public License v3.0 (AGPLv3)](LICENSE).
 
 # Bulletin Board
 

@@ -1,3 +1,18 @@
+// Copyright (c) 2021-2026 Rustam Gilyazov and Contributors.
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU Affero General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU Affero General Public License for more details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 package slackdump
 
 import (
@@ -11,12 +26,25 @@ import (
 	"github.com/rusq/fsadapter"
 	"github.com/rusq/slack"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 
-	"github.com/rusq/slackdump/v3/auth"
-	"github.com/rusq/slackdump/v3/internal/client/mock_client"
-	"github.com/rusq/slackdump/v3/internal/network"
+	"github.com/rusq/slackdump/v4/auth"
+	"github.com/rusq/slackdump/v4/internal/client"
+	"github.com/rusq/slackdump/v4/internal/client/mock_client"
+	"github.com/rusq/slackdump/v4/internal/network"
 )
+
+type closableClient struct {
+	client.Slack
+	closed bool
+	err    error
+}
+
+func (c *closableClient) Close() error {
+	c.closed = true
+	return c.err
+}
 
 func Test_newLimiter(t *testing.T) {
 	t.Parallel()
@@ -143,7 +171,7 @@ func TestSession_initWorkspaceInfo(t *testing.T) {
 	ctx := t.Context()
 	t.Run("ok", func(t *testing.T) {
 		ctrl := gomock.NewController(t)
-		mc := mock_client.NewMockSlackClienter(ctrl)
+		mc := mock_client.NewMockSlack(ctrl)
 		mc.EXPECT().AuthTestContext(gomock.Any()).Return(&slack.AuthTestResponse{
 			TeamID: "TEST",
 		}, nil)
@@ -156,12 +184,32 @@ func TestSession_initWorkspaceInfo(t *testing.T) {
 	})
 	t.Run("error", func(t *testing.T) {
 		ctrl := gomock.NewController(t)
-		mc := mock_client.NewMockSlackClienter(ctrl)
+		mc := mock_client.NewMockSlack(ctrl)
 		mc.EXPECT().AuthTestContext(gomock.Any()).Return(nil, assert.AnError)
 		s := Session{
 			client: nil, // it should use the provided client
 		}
 		err := s.initWorkspaceInfo(ctx, mc)
 		assert.Error(t, err, "expected error")
+	})
+}
+
+func TestSessionClose(t *testing.T) {
+	t.Run("delegates to closable client", func(t *testing.T) {
+		cc := &closableClient{}
+		s := &Session{client: cc}
+
+		err := s.Close()
+
+		require.NoError(t, err)
+		assert.True(t, cc.closed)
+	})
+
+	t.Run("no-op for non-closable client", func(t *testing.T) {
+		ctrl := gomock.NewController(t)
+		mc := mock_client.NewMockSlack(ctrl)
+		s := &Session{client: mc}
+
+		assert.NoError(t, s.Close())
 	})
 }

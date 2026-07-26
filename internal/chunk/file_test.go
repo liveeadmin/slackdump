@@ -1,3 +1,18 @@
+// Copyright (c) 2021-2026 Rustam Gilyazov and Contributors.
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU Affero General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU Affero General Public License for more details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 package chunk
 
 import (
@@ -11,6 +26,8 @@ import (
 
 	"github.com/rusq/slack"
 	"github.com/stretchr/testify/assert"
+
+	"github.com/rusq/slackdump/v4/internal/testutil"
 )
 
 const (
@@ -381,7 +398,7 @@ func TestFile_AllUsers(t *testing.T) {
 			fields: fields{
 				rs: marshalChunks(append(testUserChunks, testChunks...)...),
 			},
-			want: []slack.User{
+			want: testutil.RoundTripJSON(t, []slack.User{
 				{ID: "U1234567890", Name: "user1"},
 				{ID: "U987654321", Name: "user2"},
 				{ID: "U1234567891", Name: "user3"},
@@ -390,7 +407,7 @@ func TestFile_AllUsers(t *testing.T) {
 				{ID: "U987654323", Name: "user6"},
 				{ID: "U1234567893", Name: "user7"},
 				{ID: "U987654324", Name: "user8"},
-			},
+			}),
 		},
 	}
 	for _, tt := range tests {
@@ -426,16 +443,6 @@ func TestFile_offsetTimestamps(t *testing.T) {
 			fields: fields{
 				rs: marshalChunks(testChunks...),
 			},
-			want: offts{
-				671:  offsetInfo{ID: TestChannelID, TS: 123456, Timestamps: []int64{1234567890100000, 1234567890200000, 1234567890300000, 1234567890400000, 1234567890500000}},
-				1506: offsetInfo{ID: TestChannelID, TS: 123456, Timestamps: []int64{1234567890600000, 1234567890700000}},
-				1874: offsetInfo{ID: TestChannelID, TS: 123456, Timestamps: []int64{1234567890800000, 1234567890800000}},
-				2330: offsetInfo{ID: "tC1234567890:1234567890.800000", Type: CThreadMessages, TS: 1234567890, Timestamps: []int64{1234567890900000, 1234567891100000}},
-				3833: offsetInfo{ID: TestChannelID2, TS: 123456, Timestamps: []int64{1234567890100000, 1234567890200000, 1234567890300000, 1234567890400000, 1234567890500000}},
-				4667: offsetInfo{ID: TestChannelID2, TS: 123456, Timestamps: []int64{1234567890600000, 1234567890700000}},
-				5034: offsetInfo{ID: TestChannelID2, TS: 123456, Timestamps: []int64{1234567890800000, 1234567890800000}},
-				5489: offsetInfo{ID: "tC987654321:1234567890.800000", Type: CThreadMessages, TS: 1234567890, Timestamps: []int64{1234567890900000, 1234567891100000}},
-			},
 		},
 	}
 	for _, tt := range tests {
@@ -449,7 +456,25 @@ func TestFile_offsetTimestamps(t *testing.T) {
 				t.Errorf("File.offsetTimestamps() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
-			assert.Equal(t, tt.want, got)
+			want := offts{}
+			for _, wantInfo := range []struct {
+				chunk int
+				index int
+				info  offsetInfo
+			}{
+				{2, 0, offsetInfo{ID: TestChannelID, TS: 123456, Timestamps: []int64{1234567890100000, 1234567890200000, 1234567890300000, 1234567890400000, 1234567890500000}}},
+				{3, 1, offsetInfo{ID: TestChannelID, TS: 123456, Timestamps: []int64{1234567890600000, 1234567890700000}}},
+				{4, 2, offsetInfo{ID: TestChannelID, TS: 123456, Timestamps: []int64{1234567890800000, 1234567890800000}}},
+				{5, 0, offsetInfo{ID: "tC1234567890:1234567890.800000", Type: CThreadMessages, TS: 1234567890, Timestamps: []int64{1234567890900000, 1234567891100000}}},
+				{8, 0, offsetInfo{ID: TestChannelID2, TS: 123456, Timestamps: []int64{1234567890100000, 1234567890200000, 1234567890300000, 1234567890400000, 1234567890500000}}},
+				{9, 1, offsetInfo{ID: TestChannelID2, TS: 123456, Timestamps: []int64{1234567890600000, 1234567890700000}}},
+				{10, 2, offsetInfo{ID: TestChannelID2, TS: 123456, Timestamps: []int64{1234567890800000, 1234567890800000}}},
+				{11, 0, offsetInfo{ID: "tC987654321:1234567890.800000", Type: CThreadMessages, TS: 1234567890, Timestamps: []int64{1234567890900000, 1234567891100000}}},
+			} {
+				offset := p.idx[testChunks[wantInfo.chunk].ID()][wantInfo.index]
+				want[offset] = wantInfo.info
+			}
+			assert.Equal(t, want, got)
 		})
 	}
 }

@@ -1,3 +1,18 @@
+// Copyright (c) 2021-2026 Rustam Gilyazov and Contributors.
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU Affero General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU Affero General Public License for more details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 package convert
 
 import (
@@ -11,9 +26,10 @@ import (
 	"github.com/rusq/fsadapter"
 	"github.com/rusq/slack"
 
-	"github.com/rusq/slackdump/v3/internal/convert/transform"
-	"github.com/rusq/slackdump/v3/internal/convert/transform/fileproc"
-	"github.com/rusq/slackdump/v3/source"
+	"github.com/rusq/slackdump/v4/internal/convert/transform"
+	"github.com/rusq/slackdump/v4/internal/convert/transform/fileproc"
+	"github.com/rusq/slackdump/v4/internal/structures"
+	"github.com/rusq/slackdump/v4/source"
 )
 
 const (
@@ -53,6 +69,7 @@ func NewToExport(src source.Sourcer, trg fsadapter.FS, opt ...Option) *ToExport 
 		opts: options{
 			includeFiles:   false,
 			includeAvatars: false,
+			dmMode:         structures.DMSingle,
 			trgFileLoc:     source.MattermostFilepath,
 			avtrFileLoc:    fileproc.AvatarPath,
 			lg:             slog.Default(),
@@ -115,6 +132,7 @@ func (c *ToExport) Convert(ctx context.Context) error {
 
 	tfopts := []transform.ExpCvtOption{
 		transform.ExpWithUsers(users),
+		transform.ExpWithDMMode(c.opts.dmMode),
 	}
 	// 1. generator
 	chC := sliceToChan(channels)
@@ -124,7 +142,10 @@ func (c *ToExport) Convert(ctx context.Context) error {
 	errC := make(chan error, c.workers)
 	{
 		// 2. workers
-		var filewg sync.WaitGroup
+		var (
+			filewg   sync.WaitGroup
+			resultwg sync.WaitGroup
+		)
 
 		if c.opts.includeFiles && c.src.Files().Type() != source.STnone {
 			tfopts = append(tfopts, transform.ExpWithMsgUpdateFunc(func(ch *slack.Channel, m *slack.Message) error {
@@ -137,21 +158,17 @@ func (c *ToExport) Convert(ctx context.Context) error {
 				}
 				return nil
 			}))
-			filewg.Add(1)
-			go func() {
+			filewg.Go(func() {
 				c.copyworker(c.filerequest)
-				filewg.Done()
-			}()
+			})
 		} else {
 			close(c.fileresult)
 		}
 
 		if c.opts.includeAvatars && c.src.Avatars().Type() != source.STnone {
-			filewg.Add(1)
-			go func() {
+			filewg.Go(func() {
 				c.avatarWorker(users)
-				filewg.Done()
-			}()
+			})
 		} else {
 			close(c.avtrresult)
 		}
@@ -160,9 +177,7 @@ func (c *ToExport) Convert(ctx context.Context) error {
 		var msgwg sync.WaitGroup
 		conv := transform.NewExpConverter(c.src, c.trg, tfopts...)
 		for range c.workers {
-			msgwg.Add(1)
-			go func() {
-				defer msgwg.Done()
+			msgwg.Go(func() {
 				for ch := range chC {
 					lg := lg.With("channel", ch.ID)
 					lg.Debug("processing channel")
@@ -171,42 +186,43 @@ func (c *ToExport) Convert(ctx context.Context) error {
 						return
 					}
 				}
-			}()
+			})
 		}
 		// 2.2 index writer
-		msgwg.Add(1)
-		go func() {
-			defer msgwg.Done()
+		msgwg.Go(func() {
 			lg.DebugContext(ctx, "writing index", "name", c.src.Name())
 			if err := conv.WriteIndex(ctx); err != nil {
 				errC <- err
 			}
-		}()
-		// 2.3. workers sentinels
+		})
+		// 2.3. file result processor
+		fileresults := merge(c.fileresult, c.avtrresult)
+		resultwg.Go(func() {
+			for res := range fileresults {
+				if res.err != nil {
+					if res.fr.message != nil {
+						lg.Error("file converter: error processing message", "ts", res.fr.message.Timestamp, "err", res.err)
+					} else {
+						lg.Error("file converter", "err", res.err)
+					}
+					errC <- res.err
+				}
+			}
+		})
+
+		// 2.4. workers sentinel
 		go func() {
 			msgwg.Wait()
 			lg.Debug("messages wait group done, closing file requests")
 			close(c.filerequest)
 			filewg.Wait()
+			resultwg.Wait()
 			lg.Debug("file workers done, finalising")
 			close(errC)
 		}()
 	}
-	// 3. result processor
-	fileresults := merge(c.fileresult, c.avtrresult)
-	go func() {
-		for res := range fileresults {
-			if res.err != nil {
-				if res.fr.message != nil {
-					lg.Error("file converter: error processing message", "ts", res.fr.message.Timestamp, "err", res.err)
-				} else {
-					lg.Error("file converter", "err", res.err)
-				}
-				errC <- res.err
-			}
-		}
-	}()
 
+	// 3. result processor
 	var failed bool
 LOOP:
 	for {

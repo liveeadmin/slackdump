@@ -1,3 +1,18 @@
+// Copyright (c) 2021-2026 Rustam Gilyazov and Contributors.
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU Affero General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU Affero General Public License for more details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 package structures
 
 import (
@@ -33,6 +48,35 @@ type DM struct {
 	Members []string `json:"members"`
 }
 
+// DMMode controls how 1-member IMs are serialized into dms.json.
+type DMMode string
+
+const (
+	// DMSingle serializes IMs for single-user exports, preserving the historic
+	// slackdump round-trip convention of [other_user, current_user].
+	DMSingle DMMode = "single"
+	// DMMulti preserves the observed IM membership for merged multi-user
+	// archives where a single archive-wide "me" is not meaningful.
+	DMMulti DMMode = "multi"
+)
+
+func (m *DMMode) Set(v string) error {
+	switch DMMode(strings.ToLower(v)) {
+	case DMSingle, DMMulti:
+		*m = DMMode(strings.ToLower(v))
+		return nil
+	default:
+		return fmt.Errorf("unknown dm mode: %s", v)
+	}
+}
+
+func (m DMMode) String() string {
+	if m == "" {
+		return string(DMSingle)
+	}
+	return string(m)
+}
+
 var (
 	ErrNoChannel = errors.New("empty channel data base")
 	ErrNoUsers   = errors.New("empty users data base")
@@ -42,7 +86,7 @@ var (
 // MakeExportIndex creates a channels and users index for export archive, splitting
 // channels in group/mpims/dms/public channels.  currentUserID should contain
 // the current user ID.
-func MakeExportIndex(channels []slack.Channel, users []slack.User, currentUserID string) (*ExportIndex, error) {
+func MakeExportIndex(channels []slack.Channel, users []slack.User, currentUserID string, dmMode DMMode) (*ExportIndex, error) {
 	if len(channels) == 0 {
 		return nil, ErrNoChannel
 	}
@@ -64,7 +108,7 @@ func MakeExportIndex(channels []slack.Channel, users []slack.User, currentUserID
 	for _, ch := range channels {
 		switch {
 		case ch.IsIM:
-			idx.DMs = append(idx.DMs, convertToDM(currentUserID, ch))
+			idx.DMs = append(idx.DMs, convertToDM(currentUserID, ch, dmMode))
 		case ch.IsMpIM:
 			if ch.NumMembers == 0 {
 				ch.NumMembers = len(ch.Members)
@@ -85,7 +129,7 @@ func (idx *ExportIndex) Marshal(fs fsadapter.FS) error {
 	if fs == nil {
 		return errors.New("marshal: no fs")
 	}
-	st := reflect.TypeOf(*idx)
+	st := reflect.TypeFor[ExportIndex]()
 	val := reflect.ValueOf(*idx)
 	for i := 0; i < st.NumField(); i++ {
 		field := st.Field(i)
@@ -122,7 +166,7 @@ const (
 func (idx *ExportIndex) Unmarshal(fsys fs.FS) error {
 	var newIdx ExportIndex
 
-	st := reflect.TypeOf(*idx)
+	st := reflect.TypeFor[ExportIndex]()
 	val := reflect.ValueOf(&newIdx).Elem()
 	for i := 0; i < st.NumField(); i++ {
 		field := st.Field(i)
@@ -165,7 +209,7 @@ func dmsToChannels(DMs []DM) []slack.Channel {
 					ID:      dm.ID,
 					Created: slack.JSONTime(dm.Created),
 					IsIM:    true,
-					User:    except(me, dm.Members),
+					User:    except(me, dm.Members, 1),
 				},
 				Members: dm.Members,
 			},
@@ -196,11 +240,18 @@ func unmarshalFileFS(fsys fs.FS, filename string, data any) error {
 	return dec.Decode(data)
 }
 
-// except returns the first element of the slice that is not s, or zero value
-// if not found.
-func except[S ~[]T, T comparable](s T, ss S) T {
+// except returns the first element of ss that is not equal to s. If no such
+// element is found before index stopAfterIdx (0-based), it instead returns the
+// element at index stopAfterIdx. If stopAfterIdx is -1, the entire slice is
+// scanned, and if no element different from s is found, the zero value of T is
+// returned.
+func except[S ~[]T, T comparable](s T, ss S, stopAfterIdx int) T {
+	const scanAll = -1
 	var zero T
-	for _, t := range ss {
+	for i, t := range ss {
+		if stopAfterIdx != scanAll && i >= stopAfterIdx {
+			return t
+		}
 		if t != s {
 			return t
 		}
@@ -208,10 +259,14 @@ func except[S ~[]T, T comparable](s T, ss S) T {
 	return zero
 }
 
-// mostFrequentMember attempts to identify the current user in the index.  It uses the DMs of
-// the index. If DMs are empty, or it's unable to identify the user, it
-// returns an empty string.  The user, who appears in "Members" slices the
-// most, is considered the current user.
+// mostFrequentMember attempts to identify the current user in the index.  It
+// uses the DMs of the index. If DMs are empty, or it's unable to identify the
+// user, it returns an empty string.  The user, who appears in "Members" slices
+// the most, is considered the current user.
+//
+// When there is a tie, the last member of the first DM is chosen as "me" to
+// keep restores from single-user exports stable.  Multi-user exports are
+// best-effort with this heuristic, because dms.json has no archive-wide owner.
 func mostFrequentMember(dms []DM) string {
 	counts := make(map[string]int)
 	for _, dm := range dms {
@@ -223,27 +278,63 @@ func mostFrequentMember(dms []DM) string {
 		max int
 		id  string
 	)
+	// Collect all candidates that share the highest frequency.
 	for k, v := range counts {
 		if v > max {
 			max = v
 			id = k
 		}
 	}
+	// Check for a tie: if multiple members share the max count, the map
+	// iteration order is non-deterministic.  Fall back to the first member
+	// of the first DM so the result is stable.
+	tied := 0
+	for _, v := range counts {
+		if v == max {
+			tied++
+		}
+	}
+	if tied > 1 && len(dms) > 0 && len(dms[0].Members) > 0 {
+		// Single-user exports typically order members as
+		// [other_user, current_user], so pick the last member as "me".
+		return dms[0].Members[len(dms[0].Members)-1]
+	}
 	return id
 }
 
-func convertToDM(me string, ch slack.Channel) DM {
+func convertToDM(me string, ch slack.Channel, mode DMMode) DM {
+	if mode == "" {
+		mode = DMSingle
+	}
 	d := DM{
 		ID:      ch.ID,
 		Created: int64(ch.Created),
 	}
 	switch len(ch.Members) {
 	case 0:
-		d.Members = []string{ch.User, me}
+		if mode == DMMulti {
+			d.Members = []string{ch.User, ch.User}
+		} else {
+			d.Members = []string{ch.User, me}
+		}
 	case 1:
-		d.Members = []string{ch.User, me}
+		if mode == DMMulti {
+			d.Members = []string{ch.User, ch.Members[0]}
+		} else {
+			d.Members = []string{ch.User, me}
+		}
 	default:
-		d.Members = ch.Members
+		d.Members = normalizeDMMembers(me, ch.Members)
 	}
 	return d
+}
+
+func normalizeDMMembers(me string, members []string) []string {
+	if len(members) != 2 {
+		return members
+	}
+	if members[0] == me && members[1] != me {
+		return []string{members[1], members[0]}
+	}
+	return members
 }

@@ -1,3 +1,18 @@
+// Copyright (c) 2021-2026 Rustam Gilyazov and Contributors.
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU Affero General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU Affero General Public License for more details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 package workspace
 
 import (
@@ -8,18 +23,18 @@ import (
 	"os"
 	"strings"
 
-	"github.com/rusq/slackdump/v3/auth"
-	"github.com/rusq/slackdump/v3/cmd/slackdump/internal/cfg"
-	"github.com/rusq/slackdump/v3/cmd/slackdump/internal/golang/base"
-	"github.com/rusq/slackdump/v3/cmd/slackdump/internal/workspace/workspaceui"
-	"github.com/rusq/slackdump/v3/cmd/slackdump/internal/workspace/wspcfg"
-	"github.com/rusq/slackdump/v3/internal/cache"
+	"github.com/rusq/slackdump/v4/auth"
+	"github.com/rusq/slackdump/v4/cmd/slackdump/internal/cfg"
+	"github.com/rusq/slackdump/v4/cmd/slackdump/internal/golang/base"
+	"github.com/rusq/slackdump/v4/cmd/slackdump/internal/workspace/workspaceui"
+	"github.com/rusq/slackdump/v4/cmd/slackdump/internal/workspace/wspcfg"
+	"github.com/rusq/slackdump/v4/internal/cache"
 )
 
 //go:embed assets/new.md
 var newMD string
 
-var CmdWspNew = &base.Command{
+var cmdWspNew = &base.Command{
 	UsageLine:  baseCommand + " new [flags] <name>",
 	Short:      "authenticate in a Slack Workspace",
 	Long:       newMD,
@@ -29,20 +44,20 @@ var CmdWspNew = &base.Command{
 }
 
 func init() {
-	wspcfg.SetWspFlags(&CmdWspNew.Flag)
+	wspcfg.SetWspFlags(&cmdWspNew.Flag)
 
-	CmdWspNew.Run = runWspNew
+	cmdWspNew.Run = runWspNew
 }
 
 // runWspNew authenticates in the new workspace.
 func runWspNew(ctx context.Context, cmd *base.Command, args []string) error {
+	authOpts := append([]auth.Option{
+		auth.BrowserWithBrowser(wspcfg.Browser),
+		auth.BrowserWithTimeout(wspcfg.LoginTimeout),
+	}, wspcfg.RodAuthOptions()...)
+
 	m, err := CacheMgr(
-		cache.WithAuthOpts(
-			auth.BrowserWithBrowser(wspcfg.Browser),
-			auth.BrowserWithTimeout(wspcfg.LoginTimeout),
-			auth.RODWithRODHeadlessTimeout(wspcfg.HeadlessTimeout),
-			auth.RODWithUserAgent(wspcfg.RODUserAgent),
-		))
+		cache.WithAuthOpts(authOpts...))
 	if err != nil {
 		base.SetExitStatus(base.SCacheError)
 		return fmt.Errorf("error initialising workspace manager: %s", err)

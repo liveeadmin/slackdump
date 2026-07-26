@@ -1,3 +1,18 @@
+// Copyright (c) 2021-2026 Rustam Gilyazov and Contributors.
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU Affero General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU Affero General Public License for more details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 // Package emojidl provides functions to dump the all slack emojis for a workspace.
 // It skips the "alias" emojis, so only original an emoji with an original name
 // is present. If you need to find the alias - lookup the index.json. The
@@ -28,8 +43,8 @@ import (
 
 	"github.com/rusq/fsadapter"
 
-	"github.com/rusq/slackdump/v3/cmd/slackdump/internal/cfg"
-	"github.com/rusq/slackdump/v3/internal/edge"
+	"github.com/rusq/slackdump/v4/cmd/slackdump/internal/cfg"
+	"github.com/rusq/slackdump/v4/internal/edge"
 )
 
 const (
@@ -128,12 +143,10 @@ func fetch(ctx context.Context, fsa fsadapter.FS, emojis map[string]string, fail
 
 	// 2. Download workers, download the emojis.
 	var wg sync.WaitGroup
-	for i := 0; i < numWorkers; i++ {
-		wg.Add(1)
-		go func() {
+	for range numWorkers {
+		wg.Go(func() {
 			worker(ctx, fsa, emojiC, resultC)
-			wg.Done()
-		}()
+		})
 	}
 	// 3. Sentinel, closes the result channel once all workers are finished.
 	go func() {

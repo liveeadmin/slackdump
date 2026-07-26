@@ -1,3 +1,18 @@
+// Copyright (c) 2021-2026 Rustam Gilyazov and Contributors.
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU Affero General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU Affero General Public License for more details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 package filemgr
 
 import (
@@ -14,6 +29,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/rusq/rbubbles/display"
+	"github.com/rusq/slackdump/v4/cmd/slackdump/internal/ui"
 )
 
 type Model struct {
@@ -23,6 +39,7 @@ type Model struct {
 	BaseDir    string
 	Directory  string
 	Height     int
+	Width      int
 	ShowHelp   bool
 	ShowCurDir bool
 	Style      Style
@@ -69,6 +86,7 @@ func New(fsys fs.FS, base string, dir string, height int, globs ...string) Model
 		Directory:  dir,
 		BaseDir:    base,
 		Height:     height,
+		Width:      DefaultWidth,
 		focus:      false,
 		ShowCurDir: true,
 		// Sensible defaults
@@ -196,6 +214,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		if m.Height == 0 {
 			m.Height = msg.Height
 		}
+		m.Width = clampWidth(msg.Width)
 	case tea.KeyMsg:
 		if !m.focus {
 			break
@@ -289,17 +308,34 @@ func humanizeSize(size int64) string {
 	}
 }
 
-const Width = 40
+const (
+	DefaultWidth = 78
+	MinWidth     = 40
+)
 
-func printFile(fi fs.FileInfo) string {
+func clampWidth(w int) int {
+	if w <= 0 {
+		return DefaultWidth
+	}
+	if w < MinWidth {
+		return MinWidth
+	}
+	return w
+}
+
+func (m Model) width() int {
+	return clampWidth(m.Width)
+}
+
+func (m Model) printFile(fi fs.FileInfo) string {
 	// filename.extension  <DIR>  02-01-2006 15:04
 	const (
 		dttmLayout = "02-01-2006 15:04"
 		dirMarker  = "<DIR>"
 		filesizeSz = 6
 		dttmSz     = len(dttmLayout)
-		filenameSz = Width - filesizeSz - dttmSz - 3
 	)
+	filenameSz := max(m.width()-filesizeSz-dttmSz-3, 1)
 
 	sz := dirMarker
 	if !fi.IsDir() {
@@ -315,7 +351,7 @@ func (m Model) printDebug(w io.Writer) {
 	fmt.Fprintf(w, "last: %q\n", m.last)
 	fmt.Fprintf(w, "dir: %q\n", m.Directory)
 	fmt.Fprintf(w, "selected: %q\n", m.Selected)
-	for i := range Width {
+	for i := range m.width() {
 		if n := i % 10; n == 0 {
 			w.Write([]byte{'|'})
 		} else {
@@ -344,9 +380,9 @@ func (m Model) View() string {
 		)
 	}
 	if len(m.files) == 0 {
-		buf.WriteString(m.Style.Normal.Render("No files found, press [Backspace]") + "\n")
+		buf.WriteString(m.Style.Normal.Render("No files found, press ["+ui.KeyBack+"]") + "\n")
 		for i := 0; i < m.height()-1; i++ {
-			fmt.Fprintln(&buf, m.Style.Normal.Render(strings.Repeat(" ", Width-1))) // padding
+			fmt.Fprintln(&buf, m.Style.Normal.Render(strings.Repeat(" ", m.width()-1))) // padding
 		}
 	} else {
 		for i, file := range m.files {
@@ -364,15 +400,21 @@ func (m Model) View() string {
 					style = m.Style.Shaded
 				}
 			}
-			fmt.Fprintln(&buf, style.Render(printFile(file)))
+			fmt.Fprintln(&buf, style.Render(m.printFile(file)))
 		}
 		numDisplayed := m.st.Displayed(len(m.files))
 		for i := 0; i < m.height()-numDisplayed; i++ {
-			fmt.Fprintln(&buf, m.Style.Normal.Render(strings.Repeat(" ", Width-1)))
+			fmt.Fprintln(&buf, m.Style.Normal.Render(strings.Repeat(" ", m.width()-1)))
 		}
 	}
 	if m.ShowHelp {
-		buf.WriteString("\n ↑↓ move•[⏎] select•[⇤] back•[q] quit")
+		buf.WriteString(fmt.Sprintf("\n %s move•%s select•%s back•%s quit•%s refresh",
+			ui.KeyUpDown,
+			ui.KeyEnter,
+			ui.KeyBack,
+			ui.KeyQuitAll,
+			ui.KeyCtrlR,
+		))
 	}
 	return buf.String()
 }
@@ -426,14 +468,15 @@ func (s specialDir) IsDir() bool {
 	return true
 }
 
-func (s specialDir) Sys() interface{} {
+func (s specialDir) Sys() any {
 	return s
 }
 
 // shorten returns a shortened version of a path.
 func (m Model) shorten(dirpath string) string {
 	dirpath = filepath.Clean(dirpath)
-	if len(dirpath) < Width-1 {
+	width := m.width()
+	if len(dirpath) < width-1 {
 		return dirpath
 	}
 	dirpath = filepath.Clean(dirpath)
@@ -462,8 +505,8 @@ func (m Model) shorten(dirpath string) string {
 	if dirpath[0] == '/' {
 		res = "/" + res
 	}
-	if len(res) > Width-1 {
-		res = "…" + res[len(res)-Width+3:]
+	if len(res) > width-1 {
+		res = "…" + res[len(res)-width+3:]
 	}
 	return res
 }

@@ -1,3 +1,18 @@
+// Copyright (c) 2021-2026 Rustam Gilyazov and Contributors.
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU Affero General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU Affero General Public License for more details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 package diag
 
 import (
@@ -11,8 +26,8 @@ import (
 	"github.com/ProtonMail/go-crypto/openpgp/armor"
 	"github.com/ProtonMail/go-crypto/openpgp/packet"
 
-	"github.com/rusq/slackdump/v3/cmd/slackdump/internal/cfg"
-	"github.com/rusq/slackdump/v3/cmd/slackdump/internal/golang/base"
+	"github.com/rusq/slackdump/v4/cmd/slackdump/internal/cfg"
+	"github.com/rusq/slackdump/v4/cmd/slackdump/internal/golang/base"
 )
 
 // pub   rsa4096 2020-03-22 [SC] [expires: 2029-03-21]
@@ -138,30 +153,45 @@ func runEncrypt(ctx context.Context, cmd *base.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	defer in.Close()
-	defer out.Close()
+	defer func() { _ = in.Close() }()
 
 	var w io.Writer = out
+	var aw io.WriteCloser
 	if arm || gArm {
 		// arm if requested
-		aw, err := armor.Encode(out, "PGP MESSAGE", nil)
+		aw, err = armor.Encode(out, "PGP MESSAGE", nil)
 		if err != nil {
+			_ = out.Close()
 			base.SetExitStatus(base.SApplicationError)
 			return err
 		}
-		defer aw.Close()
 		w = aw
 	}
 
 	cw, err := openpgp.Encrypt(w, []*openpgp.Entity{recipient}, nil, &openpgp.FileHints{IsBinary: true}, nil)
 	if err != nil {
+		if aw != nil {
+			_ = aw.Close()
+		}
+		_ = out.Close()
 		base.SetExitStatus(base.SApplicationError)
 		return err
 	}
-	defer cw.Close()
-	if _, err := io.Copy(cw, in); err != nil {
+	_, copyErr := io.Copy(cw, in)
+	if err := cw.Close(); err != nil && copyErr == nil {
+		copyErr = err
+	}
+	if aw != nil {
+		if err := aw.Close(); err != nil && copyErr == nil {
+			copyErr = err
+		}
+	}
+	if err := out.Close(); err != nil && copyErr == nil {
+		copyErr = err
+	}
+	if copyErr != nil {
 		base.SetExitStatus(base.SApplicationError)
-		return err
+		return copyErr
 	}
 	return nil
 }
@@ -197,7 +227,7 @@ func parseArgs(args []string) (in io.ReadCloser, out io.WriteCloser, arm bool, e
 		} else {
 			out, err = os.Create(args[1])
 			if err != nil {
-				in.Close()
+				_ = in.Close()
 				base.SetExitStatus(base.SApplicationError)
 				return nil, nil, false, err
 			}

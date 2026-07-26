@@ -1,3 +1,18 @@
+// Copyright (c) 2021-2026 Rustam Gilyazov and Contributors.
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU Affero General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU Affero General Public License for more details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 package structures
 
 import (
@@ -12,13 +27,14 @@ import (
 	"github.com/rusq/fsadapter"
 	"github.com/rusq/fsadapter/mocks/mock_fsadapter"
 	"github.com/rusq/slack"
-	"github.com/rusq/slackdump/v3/internal/fixtures"
-	"github.com/rusq/slackdump/v3/internal/mocks/mock_io"
 	"github.com/stretchr/testify/assert"
 	"go.uber.org/mock/gomock"
+
+	"github.com/rusq/slackdump/v4/internal/fixtures"
+	"github.com/rusq/slackdump/v4/internal/mocks/mock_io"
 )
 
-func TestMostFrequentMember(t *testing.T) {
+func Test_mostFrequentMember(t *testing.T) {
 	type args struct {
 		dms []DM
 	}
@@ -37,6 +53,21 @@ func TestMostFrequentMember(t *testing.T) {
 			args{[]DM{{Members: []string{"me", "you"}}, {Members: []string{"me", "someone_else"}}, {Members: []string{"me"}}}},
 			"me",
 		},
+		{
+			"self-chat",
+			args{[]DM{{Members: []string{"me", "me"}}}},
+			"me",
+		},
+		{
+			"single dm picks last member on tie",
+			args{[]DM{{Members: []string{"other", "me"}}}},
+			"me",
+		},
+		{
+			"single dm with reversed order",
+			args{[]DM{{Members: []string{"me", "other"}}}},
+			"other",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -47,10 +78,11 @@ func TestMostFrequentMember(t *testing.T) {
 	}
 }
 
-func TestExcept(t *testing.T) {
+func Test_except(t *testing.T) {
 	type args struct {
-		me      string
-		members []string
+		me           string
+		members      []string
+		stopAfterIdx int
 	}
 	tests := []struct {
 		name string
@@ -59,24 +91,39 @@ func TestExcept(t *testing.T) {
 	}{
 		{
 			"finds not me",
-			args{"me", []string{"you", "me"}},
+			args{"me", []string{"you", "me"}, -1},
 			"you",
 		},
 		{
 			"finds not me in several members",
-			args{"me", []string{"you", "me", "someone_else"}},
+			args{"me", []string{"you", "me", "someone_else"}, -1},
 			"you",
 		},
 		{
 			"returns empty string if no not me",
-			args{"me", []string{"me"}},
+			args{"me", []string{"me"}, -1},
 			"",
+		},
+		{
+			"leaves one me alone",
+			args{"me", []string{"me", "me"}, 1},
+			"me",
+		},
+		{
+			"scans all, returns empty value",
+			args{"me", []string{"me", "me"}, -1},
+			"",
+		},
+		{
+			"still me",
+			args{"me", []string{"me", "me", "me"}, 2},
+			"me",
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := except(tt.args.me, tt.args.members); got != tt.want {
-				t.Errorf("ExportIndex.notMe() = %v, want %v", got, tt.want)
+			if got := except(tt.args.me, tt.args.members, tt.args.stopAfterIdx); got != tt.want {
+				t.Errorf("except() = %v, want %v", got, tt.want)
 			}
 		})
 	}
@@ -383,11 +430,11 @@ func TestExportIndex_Marshal(t *testing.T) {
 			},
 			args{fsadapter.NewDirectory(dir)},
 			[]resultfile{
-				{"channels.json", 1979},
+				{"channels.json", 2039},
 				{"groups.json", 3},
-				{"mpims.json", 2172},
+				{"mpims.json", 2232},
 				{"dms.json", 955},
-				{"users.json", 16061},
+				{"users.json", 17077},
 			},
 			false,
 		},
@@ -422,6 +469,7 @@ func TestMakeExportIndex(t *testing.T) {
 		channels      []slack.Channel
 		users         []slack.User
 		currentUserID string
+		dmMode        DMMode
 	}
 	tests := []struct {
 		name    string
@@ -435,6 +483,7 @@ func TestMakeExportIndex(t *testing.T) {
 				fixtures.Load[[]slack.Channel](string(fixtures.TestExpReferenceChannelsJSON)),
 				fixtures.Load[[]slack.User](string(fixtures.TestExpUsersJSON)),
 				"UGTRHT2SH",
+				DMSingle,
 			},
 			&ExportIndex{
 				Channels: fixtures.Load[[]slack.Channel](string(fixtures.TestExpChannelsJSON)),
@@ -445,10 +494,43 @@ func TestMakeExportIndex(t *testing.T) {
 			},
 			false,
 		},
+		{
+			"makes index in multi-user mode",
+			args{
+				[]slack.Channel{
+					{
+						GroupConversation: slack.GroupConversation{
+							Conversation: slack.Conversation{
+								ID:      "D01",
+								User:    "UOTHER123",
+								Created: slack.JSONTime(1568448961),
+								IsIM:    true,
+							},
+							Members: []string{"UOTHER123"},
+						},
+					},
+				},
+				[]slack.User{{ID: "UGTRHT2SH"}},
+				"UGTRHT2SH",
+				DMMulti,
+			},
+			&ExportIndex{
+				Channels: []slack.Channel{},
+				Groups:   []slack.Channel{},
+				MPIMs:    []slack.Channel{},
+				DMs: []DM{{
+					ID:      "D01",
+					Created: 1568448961,
+					Members: []string{"UOTHER123", "UOTHER123"},
+				}},
+				Users: []slack.User{{ID: "UGTRHT2SH"}},
+			},
+			false,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := MakeExportIndex(tt.args.channels, tt.args.users, tt.args.currentUserID)
+			got, err := MakeExportIndex(tt.args.channels, tt.args.users, tt.args.currentUserID, tt.args.dmMode)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("MakeExportIndex() error = %v, wantErr %v", err, tt.wantErr)
 				return
@@ -516,6 +598,31 @@ func Test_dmsToChannels(t *testing.T) {
 				},
 			},
 		},
+		{
+			"keeps user for self-chat dm",
+			args{
+				[]DM{
+					{
+						ID:      "DSELF",
+						Created: 1700000000,
+						Members: []string{"UME", "UME"},
+					},
+				},
+			},
+			[]slack.Channel{
+				{
+					GroupConversation: slack.GroupConversation{
+						Conversation: slack.Conversation{
+							ID:      "DSELF",
+							Created: slack.JSONTime(1700000000),
+							IsIM:    true,
+							User:    "UME",
+						},
+						Members: []string{"UME", "UME"},
+					},
+				},
+			},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -527,8 +634,9 @@ func Test_dmsToChannels(t *testing.T) {
 
 func Test_convertToDM(t *testing.T) {
 	type args struct {
-		me string
-		ch slack.Channel
+		me   string
+		ch   slack.Channel
+		mode DMMode
 	}
 	tests := []struct {
 		name string
@@ -546,7 +654,25 @@ func Test_convertToDM(t *testing.T) {
 					},
 					Members: []string{"UNEERHWJJ", "UGTRHT2SH"},
 				},
-			}},
+			}, DMSingle},
+			DM{
+				ID:      "DNC8S27U5",
+				Created: 1568448961,
+				Members: []string{"UNEERHWJJ", "UGTRHT2SH"},
+			},
+		},
+		{
+			"normalizes current user to last position",
+			args{"UGTRHT2SH", slack.Channel{
+				GroupConversation: slack.GroupConversation{
+					Conversation: slack.Conversation{
+						ID:      "DNC8S27U5",
+						Created: slack.JSONTime(1568448961),
+						IsIM:    true,
+					},
+					Members: []string{"UGTRHT2SH", "UNEERHWJJ"},
+				},
+			}, DMSingle},
 			DM{
 				ID:      "DNC8S27U5",
 				Created: 1568448961,
@@ -564,11 +690,29 @@ func Test_convertToDM(t *testing.T) {
 						IsIM:    true,
 					},
 				},
-			}},
+			}, DMSingle},
 			DM{
 				ID:      "DNC8S27U5",
 				Created: 1568448961,
 				Members: []string{"UNEERHWJJ", "UGTRHT2SH"},
+			},
+		},
+		{
+			"multi mode zero members uses ch.User for both",
+			args{"UGTRHT2SH", slack.Channel{
+				GroupConversation: slack.GroupConversation{
+					Conversation: slack.Conversation{
+						ID:      "DNC8S27U5",
+						User:    "UNEERHWJJ",
+						Created: slack.JSONTime(1568448961),
+						IsIM:    true,
+					},
+				},
+			}, DMMulti},
+			DM{
+				ID:      "DNC8S27U5",
+				Created: 1568448961,
+				Members: []string{"UNEERHWJJ", "UNEERHWJJ"},
 			},
 		},
 		{
@@ -583,11 +727,49 @@ func Test_convertToDM(t *testing.T) {
 					},
 					Members: []string{"UGTRHT2SH"},
 				},
-			}},
+			}, DMSingle},
 			DM{
 				ID:      "DNC8S27U5",
 				Created: 1568448961,
 				Members: []string{"UGTRHT2SH", "UGTRHT2SH"},
+			},
+		},
+		{
+			"single mode synthesizes current user for 1-member dm",
+			args{"UGTRHT2SH", slack.Channel{
+				GroupConversation: slack.GroupConversation{
+					Conversation: slack.Conversation{
+						ID:      "DNC8S27U5",
+						User:    "UOTHER123",
+						Created: slack.JSONTime(1568448961),
+						IsIM:    true,
+					},
+					Members: []string{"UOTHER123"},
+				},
+			}, DMSingle},
+			DM{
+				ID:      "DNC8S27U5",
+				Created: 1568448961,
+				Members: []string{"UOTHER123", "UGTRHT2SH"},
+			},
+		},
+		{
+			"multi mode preserves observed member for 1-member dm",
+			args{"UGTRHT2SH", slack.Channel{
+				GroupConversation: slack.GroupConversation{
+					Conversation: slack.Conversation{
+						ID:      "DNC8S27U5",
+						User:    "UOTHER123",
+						Created: slack.JSONTime(1568448961),
+						IsIM:    true,
+					},
+					Members: []string{"UOTHER123"},
+				},
+			}, DMMulti},
+			DM{
+				ID:      "DNC8S27U5",
+				Created: 1568448961,
+				Members: []string{"UOTHER123", "UOTHER123"},
 			},
 		},
 		{
@@ -601,7 +783,7 @@ func Test_convertToDM(t *testing.T) {
 						IsIM:    true,
 					},
 				},
-			}},
+			}, DMSingle},
 			DM{
 				ID:      "DNC8S27U5",
 				Created: 1568448961,
@@ -611,7 +793,7 @@ func Test_convertToDM(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := convertToDM(tt.args.me, tt.args.ch); !reflect.DeepEqual(got, tt.want) {
+			if got := convertToDM(tt.args.me, tt.args.ch, tt.args.mode); !reflect.DeepEqual(got, tt.want) {
 				t.Errorf("convertToDM() = %v, want %v", got, tt.want)
 			}
 		})

@@ -1,3 +1,18 @@
+// Copyright (c) 2021-2026 Rustam Gilyazov and Contributors.
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU Affero General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU Affero General Public License for more details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 package convertcmd
 
 import (
@@ -8,11 +23,12 @@ import (
 	"os"
 	"time"
 
-	"github.com/rusq/slackdump/v3/source"
+	"github.com/rusq/slackdump/v4/source"
 
-	"github.com/rusq/slackdump/v3/cmd/slackdump/internal/bootstrap"
-	"github.com/rusq/slackdump/v3/cmd/slackdump/internal/cfg"
-	"github.com/rusq/slackdump/v3/cmd/slackdump/internal/golang/base"
+	"github.com/rusq/slackdump/v4/cmd/slackdump/internal/bootstrap"
+	"github.com/rusq/slackdump/v4/cmd/slackdump/internal/cfg"
+	"github.com/rusq/slackdump/v4/cmd/slackdump/internal/golang/base"
+	"github.com/rusq/slackdump/v4/internal/structures"
 )
 
 //go:embed assets/convert.md
@@ -37,11 +53,6 @@ var (
 	ErrStorage = errors.New("unsupported storage type")
 )
 
-type tparams struct {
-	storageType source.StorageType
-	sessionID   int64
-}
-
 type convertFunc func(ctx context.Context, input, output string, cflg convertflags) error
 
 var converters = map[datafmt]convertFunc{
@@ -49,18 +60,21 @@ var converters = map[datafmt]convertFunc{
 	Fexport:   toExport,
 	Fchunk:    toChunk,
 	Fdatabase: toDatabase,
+	Fhtml:     toHTML,
 }
 
 type convertflags struct {
 	includeFiles   bool
 	includeAvatars bool
 	outStorageType source.StorageType
+	dmMode         structures.DMMode
 	sessionID      int64 // sessionID for database->chunk conversion
 	outputfmt      datafmt
 }
 
 var params = convertflags{
 	outStorageType: source.STmattermost,
+	dmMode:         structures.DMSingle,
 	sessionID:      1,
 	outputfmt:      Fexport,
 }
@@ -69,6 +83,7 @@ func init() {
 	CmdConvert.Flag.Var(&params.outStorageType, "storage", "storage type")
 	CmdConvert.Flag.Var(&params.outputfmt, "format", "output `format`")
 	CmdConvert.Flag.Var(&params.outputfmt, "f", "shorthand for -format")
+	CmdConvert.Flag.Var(&params.dmMode, "dm-mode", "DM export mode: single or multi")
 	CmdConvert.Flag.Int64Var(&params.sessionID, "session", params.sessionID, "session `id` for database->chunk conversion")
 }
 
@@ -88,8 +103,9 @@ func runConvert(ctx context.Context, cmd *base.Command, args []string) error {
 	}
 	lg := cfg.Log
 	lg.InfoContext(ctx, "converting", "source", args[0], "output_format", params.outputfmt)
+	output := normalizeOutput(params.outputfmt, cfg.Output)
 
-	if err := bootstrap.AskOverwrite(cfg.Output); err != nil {
+	if err := bootstrap.AskOverwrite(output); err != nil {
 		return err
 	}
 
@@ -98,13 +114,22 @@ func runConvert(ctx context.Context, cmd *base.Command, args []string) error {
 	params.includeAvatars = cfg.WithAvatars
 
 	start := time.Now()
-	if err := fn(ctx, args[0], cfg.Output, params); err != nil {
+	if err := fn(ctx, args[0], output, params); err != nil {
 		base.SetExitStatus(base.SApplicationError)
 		return err
 	}
 
 	lg.InfoContext(ctx, "completed", "took", time.Since(start))
 	return nil
+}
+
+func normalizeOutput(format datafmt, output string) string {
+	switch format {
+	case Fchunk, Fdatabase, Fhtml:
+		return cfg.StripZipExt(output)
+	default:
+		return output
+	}
 }
 
 func copyfiles(trgdir string, fs fs.FS) error {

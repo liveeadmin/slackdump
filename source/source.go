@@ -1,3 +1,18 @@
+// Copyright (c) 2021-2026 Rustam Gilyazov and Contributors.
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU Affero General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU Affero General Public License for more details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 package source
 
 import (
@@ -17,8 +32,9 @@ import (
 
 	"github.com/rusq/slack"
 
-	"github.com/rusq/slackdump/v3/internal/chunk"
-	"github.com/rusq/slackdump/v3/internal/structures"
+	"github.com/rusq/slackdump/v4/internal/chunk"
+	"github.com/rusq/slackdump/v4/internal/primitive"
+	"github.com/rusq/slackdump/v4/internal/structures"
 )
 
 // Sourcer is an interface for retrieving data from different sources. If any
@@ -26,7 +42,7 @@ import (
 // information is missing, i.e. no channels, or no data for the channel, it
 // should return ErrNotFound.
 //
-//go:generate mockgen -destination=mock_source/mock_source.go . Sourcer,Resumer,Storage
+//go:generate mockgen -destination=mock_source/mock_source.go . Sourcer,Resumer,Storage,SourceResumeCloser
 type Sourcer interface {
 	// Name should return the name of the retriever underlying media, i.e.
 	// directory or archive.
@@ -69,8 +85,8 @@ type Resumer interface {
 	Latest(ctx context.Context) (map[structures.SlackLink]time.Time, error)
 }
 
-// Resumer is the interface that should be implemented by sources that can be
-// resumed.
+// SourceResumeCloser is the interface that should be implemented by sources
+// that can be resumed.
 type SourceResumeCloser interface {
 	Sourcer
 	Resumer
@@ -125,17 +141,7 @@ func (f Flags) String() string {
 			return "database"
 		}
 	}
-	const bits = 8 - 1
-	const flg = "__DUECzd"
-	var buf strings.Builder
-	for i := bits; i >= 0; i-- {
-		if f&(1<<uint(i)) != 0 {
-			buf.WriteByte(flg[bits-i])
-		} else {
-			buf.WriteByte('.')
-		}
-	}
-	return buf.String()
+	return primitive.FlagRender(uint8(f), [8]byte([]byte("__DUECzd")))
 }
 
 func (f Flags) Has(ff Flags) bool {
@@ -193,7 +199,7 @@ func Load(ctx context.Context, src string) (SourceResumeCloser, error) {
 		return OpenDump(ctx, os.DirFS(src), src)
 	case st.Has(FDatabase):
 		lg.DebugContext(ctx, "loading database")
-		return OpenDatabase(ctx, src)
+		return OpenDatabaseRW(ctx, src)
 	default:
 		return nil, fmt.Errorf("unsupported source type: %s", src)
 	}

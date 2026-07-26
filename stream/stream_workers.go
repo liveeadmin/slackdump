@@ -1,3 +1,18 @@
+// Copyright (c) 2021-2026 Rustam Gilyazov and Contributors.
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU Affero General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU Affero General Public License for more details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 package stream
 
 import (
@@ -9,7 +24,7 @@ import (
 
 	"github.com/rusq/slack"
 
-	"github.com/rusq/slackdump/v3/processor"
+	"github.com/rusq/slackdump/v4/processor"
 )
 
 func (cs *Stream) channelWorker(ctx context.Context, proc processor.Conversations, results chan<- Result, threadC chan<- request, reqs <-chan request) {
@@ -40,7 +55,7 @@ func (cs *Stream) channelWorker(ctx context.Context, proc processor.Conversation
 			}
 
 			if err := cs.channel(ctx, req, func(mm []slack.Message, isLast bool) error {
-				n, err := procChanMsg(ctx, proc, threadC, channel, isLast, mm)
+				n, err := cs.procChanMsg(ctx, proc, threadC, channel, isLast, mm)
 				if err != nil {
 					return err
 				}
@@ -74,13 +89,20 @@ func (cs *Stream) threadWorker(ctx context.Context, proc processor.Conversations
 
 			channel := new(slack.Channel)
 			if req.threadOnly {
+				// Thread-only requests come from direct thread links (e.g., resume).
+				// We only need channel info (ID, name, etc.) for file paths and
+				// identification. Channel users are already recorded from the
+				// original channel archive, and thread messages contain their own
+				// user IDs. Skipping procChannelUsers saves an API call per thread.
 				var err error
-				if channel, err = cs.procChannelInfoWithUsers(ctx, proc, req.sl.Channel, req.sl.ThreadTS); err != nil {
+				if channel, err = cs.procChannelInfo(ctx, proc, req.sl.Channel, req.sl.ThreadTS); err != nil {
 					results <- Result{Type: RTThread, ChannelID: req.sl.Channel, ThreadTS: req.sl.ThreadTS, Err: err}
 					continue
 				}
 			} else {
 				// hackety hack
+				// Threads discovered from channel messages. The channel info was
+				// already fetched by channelWorker, so we just need the ID.
 				channel.ID = req.sl.Channel
 			}
 			if err := cs.thread(ctx, req, func(msgs []slack.Message, isLast bool) error {

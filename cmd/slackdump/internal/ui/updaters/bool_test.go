@@ -1,3 +1,18 @@
+// Copyright (c) 2021-2026 Rustam Gilyazov and Contributors.
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU Affero General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU Affero General Public License for more details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 package updaters
 
 import (
@@ -7,7 +22,8 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-func ptr[T any](v T) *T { return &v }
+//go:fix inline
+func ptr[T any](v T) *T { return new(v) }
 
 func Test_boolUpdateModel_Update(t *testing.T) {
 	type fields struct {
@@ -26,23 +42,23 @@ func Test_boolUpdateModel_Update(t *testing.T) {
 		{
 			name: "set value message",
 			fields: fields{
-				v: ptr(false),
+				v: new(false),
 			},
 			args: args{
 				msg: cmdSetValue("", true)(),
 			},
-			want:  BoolModel{Value: ptr(true)},
+			want:  BoolModel{Value: new(true)},
 			want1: OnClose,
 		},
 		{
 			name: "unknown message",
 			fields: fields{
-				v: ptr(false),
+				v: new(false),
 			},
 			args: args{
 				msg: tea.Key{},
 			},
-			want:  BoolModel{Value: ptr(false)},
+			want:  BoolModel{Value: new(false)},
 			want1: nil,
 		},
 	}
@@ -76,7 +92,7 @@ func Test_boolUpdateModel_Init(t *testing.T) {
 		{
 			name: "init should invert the stored value",
 			fields: fields{
-				v: ptr(false),
+				v: new(false),
 			},
 			want: cmdSetValue("", true),
 		},

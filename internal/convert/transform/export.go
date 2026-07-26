@@ -1,3 +1,18 @@
+// Copyright (c) 2021-2026 Rustam Gilyazov and Contributors.
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU Affero General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU Affero General Public License for more details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 package transform
 
 import (
@@ -14,10 +29,10 @@ import (
 	"github.com/rusq/fsadapter"
 	"github.com/rusq/slack"
 
-	"github.com/rusq/slackdump/v3/export"
-	"github.com/rusq/slackdump/v3/internal/structures"
-	"github.com/rusq/slackdump/v3/source"
-	"github.com/rusq/slackdump/v3/types"
+	"github.com/rusq/slackdump/v4/export"
+	"github.com/rusq/slackdump/v4/internal/structures"
+	"github.com/rusq/slackdump/v4/source"
+	"github.com/rusq/slackdump/v4/types"
 )
 
 type ExpCvtOption func(*ExpConverter)
@@ -36,17 +51,25 @@ func ExpWithUsers(users []slack.User) ExpCvtOption {
 	}
 }
 
+func ExpWithDMMode(mode structures.DMMode) ExpCvtOption {
+	return func(t *ExpConverter) {
+		t.dmMode = mode
+	}
+}
+
 type ExpConverter struct {
 	src     source.Sourcer
 	fsa     fsadapter.FS
 	users   atomic.Value
+	dmMode  structures.DMMode
 	msgFunc []msgUpdFunc
 }
 
 func NewExpConverter(src source.Sourcer, fsa fsadapter.FS, opt ...ExpCvtOption) *ExpConverter {
 	e := &ExpConverter{
-		src: src,
-		fsa: fsa,
+		src:    src,
+		fsa:    fsa,
+		dmMode: structures.DMSingle,
 	}
 	for _, o := range opt {
 		o(e)
@@ -178,7 +201,7 @@ func (e *ExpConverter) WriteIndex(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("error indexing channels: %w", err)
 	}
-	eidx, err := structures.MakeExportIndex(chans, e.getUsers(), wsp.UserID)
+	eidx, err := structures.MakeExportIndex(chans, e.getUsers(), wsp.UserID, e.dmMode)
 	if err != nil {
 		return fmt.Errorf("error creating export index: %w", err)
 	}

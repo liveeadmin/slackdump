@@ -1,8 +1,26 @@
+// Copyright (c) 2021-2026 Rustam Gilyazov and Contributors.
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU Affero General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU Affero General Public License for more details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 package repository
 
 import (
+	"context"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 
 	"github.com/rusq/slack"
 	"github.com/stretchr/testify/assert"
@@ -45,13 +63,14 @@ func TestNewDBFile(t *testing.T) {
 				ID:        "FILE1",
 				ChunkID:   1,
 				ChannelID: "C1",
-				MessageID: ptr[int64](1531820000000000),
-				ThreadID:  ptr[int64](1631820000000000),
+				MessageID: new(int64(1531820000000000)),
+				ThreadID:  new(int64(1631820000000000)),
 				Index:     42,
 				Mode:      "hosted",
-				Filename:  ptr("SOKO.COM"),
-				URL:       ptr("https://archive.org/details/msdos_sokoban_1984_spectrum_holobyte"),
+				Filename:  new("SOKO.COM"),
+				URL:       new("https://archive.org/details/msdos_sokoban_1984_spectrum_holobyte"),
 				Data:      must(marshal(file1)),
+				Size:      new(int64(0)), // file1.Size is 0
 			},
 			false,
 		},
@@ -66,4 +85,45 @@ func TestNewDBFile(t *testing.T) {
 			assert.Equal(t, tt.want, got)
 		})
 	}
+}
+
+func TestFileRepository_GetByIDAndSize(t *testing.T) {
+	ctx := context.Background()
+	conn := testConn(t)
+
+	if _, err := conn.ExecContext(ctx, `INSERT INTO SESSION (ID, MODE) VALUES (1, 'archive')`); err != nil {
+		t.Fatalf("insert session: %v", err)
+	}
+	if _, err := conn.ExecContext(ctx, `INSERT INTO CHUNK (ID, UNIX_TS, SESSION_ID, TYPE_ID, NUM_REC) VALUES (1, 0, 1, 2, 2)`); err != nil {
+		t.Fatalf("insert chunk: %v", err)
+	}
+	if _, err := conn.ExecContext(ctx, `
+		INSERT INTO FILE (ID, CHUNK_ID, CHANNEL_ID, IDX, MODE, FILENAME, URL, DATA, SIZE)
+		VALUES
+			('F123', 1, 'C123', 0, 'hosted', 'same.txt', 'https://example.invalid/same.txt', ?, 12345),
+			('F456', 1, 'C123', 1, 'hosted', 'other.txt', 'https://example.invalid/other.txt', ?, 999)
+	`, []byte(`{"id":"F123","size":12345}`), []byte(`{"id":"F456","size":999}`)); err != nil {
+		t.Fatalf("insert files: %v", err)
+	}
+
+	r := NewFileRepository()
+
+	t.Run("same id and size is duplicate", func(t *testing.T) {
+		got, err := r.GetByIDAndSize(ctx, conn, "F123", 12345)
+		require.NoError(t, err)
+		require.NotNil(t, got)
+		assert.Equal(t, "F123", got.ID)
+	})
+
+	t.Run("same id different size is not duplicate", func(t *testing.T) {
+		got, err := r.GetByIDAndSize(ctx, conn, "F123", 54321)
+		require.NoError(t, err)
+		assert.Nil(t, got)
+	})
+
+	t.Run("missing file is not duplicate", func(t *testing.T) {
+		got, err := r.GetByIDAndSize(ctx, conn, "F999", 12345)
+		require.NoError(t, err)
+		assert.Nil(t, got)
+	})
 }

@@ -1,3 +1,18 @@
+// Copyright (c) 2021-2026 Rustam Gilyazov and Contributors.
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU Affero General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU Affero General Public License for more details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 package repository
 
 import (
@@ -40,7 +55,7 @@ func Test_sessionRepository_Insert(t *testing.T) {
 				ctx:  t.Context(),
 				conn: testConn(t),
 				s: &Session{
-					ParentID: ptr[int64](1),
+					ParentID: new(int64(1)),
 				},
 			},
 			wantErr: true,
@@ -52,7 +67,7 @@ func Test_sessionRepository_Insert(t *testing.T) {
 				ctx:  t.Context(),
 				conn: testConn(t),
 				s: &Session{
-					ParentID: ptr[int64](1),
+					ParentID: new(int64(1)),
 					Mode:     "test",
 					Args:     "args",
 				},
@@ -73,8 +88,8 @@ func Test_sessionRepository_Insert(t *testing.T) {
 				s: &Session{
 					ID:             10,
 					CreatedAt:      time.Date(2009, time.September, 16, 5, 6, 7, 0, time.UTC),
-					FromTS:         ptr(time.Date(2010, time.September, 16, 5, 6, 7, 0, time.UTC)),
-					ToTS:           ptr(time.Date(2010, time.September, 16, 5, 6, 7, 0, time.UTC)),
+					FromTS:         new(time.Date(2010, time.September, 16, 5, 6, 7, 0, time.UTC)),
+					ToTS:           new(time.Date(2010, time.September, 16, 5, 6, 7, 0, time.UTC)),
 					Finished:       true,
 					FilesEnabled:   true,
 					AvatarsEnabled: true,
@@ -199,8 +214,8 @@ func Test_sessionRepository_Get(t *testing.T) {
 				testSession := &Session{
 					CreatedAt:      time.Date(2009, time.September, 16, 5, 6, 7, 0, time.UTC),
 					UpdatedAt:      time.Date(2009, time.September, 16, 5, 6, 7, 0, time.UTC),
-					FromTS:         ptr(time.Date(2010, time.September, 16, 5, 6, 7, 0, time.UTC)),
-					ToTS:           ptr(time.Date(2010, time.September, 16, 5, 6, 7, 0, time.UTC)),
+					FromTS:         new(time.Date(2010, time.September, 16, 5, 6, 7, 0, time.UTC)),
+					ToTS:           new(time.Date(2010, time.September, 16, 5, 6, 7, 0, time.UTC)),
 					Finished:       true,
 					FilesEnabled:   true,
 					AvatarsEnabled: true,
@@ -216,8 +231,8 @@ func Test_sessionRepository_Get(t *testing.T) {
 				ID:             1,
 				CreatedAt:      time.Date(2009, time.September, 16, 5, 6, 7, 0, time.UTC),
 				UpdatedAt:      time.Date(2009, time.September, 16, 5, 6, 7, 0, time.UTC),
-				FromTS:         ptr(time.Date(2010, time.September, 16, 5, 6, 7, 0, time.UTC)),
-				ToTS:           ptr(time.Date(2010, time.September, 16, 5, 6, 7, 0, time.UTC)),
+				FromTS:         new(time.Date(2010, time.September, 16, 5, 6, 7, 0, time.UTC)),
+				ToTS:           new(time.Date(2010, time.September, 16, 5, 6, 7, 0, time.UTC)),
 				Finished:       true,
 				FilesEnabled:   true,
 				AvatarsEnabled: true,
@@ -321,7 +336,7 @@ func Test_sessionRepository_Last(t *testing.T) {
 		}
 		testSess2 = &Session{
 			ID:             2,
-			ParentID:       ptr(int64(1)),
+			ParentID:       new(int64(1)),
 			CreatedAt:      time.Date(2009, time.September, 17, 5, 6, 7, 0, time.UTC),
 			UpdatedAt:      time.Date(2009, time.September, 18, 5, 6, 7, 0, time.UTC),
 			Finished:       false,
@@ -364,14 +379,14 @@ func Test_sessionRepository_Last(t *testing.T) {
 		{
 			name:   "gets last finished session",
 			r:      sessionRepository{},
-			args:   args{ctx: t.Context(), conn: testConn(t), finished: ptr(true)},
+			args:   args{ctx: t.Context(), conn: testConn(t), finished: new(true)},
 			prepFn: twoSess,
 			want:   testSess1,
 		},
 		{
 			name:   "gets last unfinished session",
 			r:      sessionRepository{},
-			args:   args{ctx: t.Context(), conn: testConn(t), finished: ptr(false)},
+			args:   args{ctx: t.Context(), conn: testConn(t), finished: new(false)},
 			prepFn: twoSess,
 			want:   testSess2,
 		},

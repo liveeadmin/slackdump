@@ -1,3 +1,18 @@
+// Copyright (c) 2021-2026 Rustam Gilyazov and Contributors.
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU Affero General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU Affero General Public License for more details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 package filemgr
 
 import (
@@ -157,6 +172,7 @@ func TestModel_View(t *testing.T) {
 		FS        fs.FS
 		Directory string
 		Height    int
+		Width     int
 		ShowHelp  bool
 		Style     Style
 		files     []fs.FileInfo
@@ -179,12 +195,13 @@ func TestModel_View(t *testing.T) {
 				FS:        testfs,
 				Directory: ".",
 				Height:    len(testfs),
+				Width:     DefaultWidth,
 				st: display.State{
 					Max: len(testfs),
 				},
 				files: allFiles(t, "."),
 			},
-			want: "binary1.bin         3B 01-01-0001 00:00\nbinary2.bin         3B 01-01-0001 00:00\nfile1.txt           5B 01-01-0001 00:00\nfile2.txt           5B 01-01-0001 00:00\nfile3.txt           5B 01-01-0001 00:00\ndir1             <DIR> 01-01-0001 00:00\ndir2             <DIR> 01-01-0001 00:00\n                                       \n",
+			want: "binary1.bin                                               3B 01-01-0001 00:00\nbinary2.bin                                               3B 01-01-0001 00:00\nfile1.txt                                                 5B 01-01-0001 00:00\nfile2.txt                                                 5B 01-01-0001 00:00\nfile3.txt                                                 5B 01-01-0001 00:00\ndir1                                                   <DIR> 01-01-0001 00:00\ndir2                                                   <DIR> 01-01-0001 00:00\n                                                                             \n",
 		},
 		{
 			name: "finished",
@@ -194,6 +211,7 @@ func TestModel_View(t *testing.T) {
 				FS:        testfs,
 				Directory: ".",
 				Height:    len(testfs),
+				Width:     DefaultWidth,
 				st: display.State{
 					Max: len(testfs),
 				},
@@ -210,12 +228,13 @@ func TestModel_View(t *testing.T) {
 				FS:        testfs,
 				Directory: "dir2",
 				Height:    len(testfs),
+				Width:     DefaultWidth,
 				st: display.State{
 					Max: len(testfs),
 				},
 				files: allFiles(t, "dir2"),
 			},
-			want: "..               <DIR> 01-01-0001 00:00\ndirfile.txt        16B 01-01-0001 00:00\n                                       \n                                       \n                                       \n                                       \n                                       \n                                       \n",
+			want: "..                                                     <DIR> 01-01-0001 00:00\ndirfile.txt                                              16B 01-01-0001 00:00\n                                                                             \n                                                                             \n                                                                             \n                                                                             \n                                                                             \n                                                                             \n",
 		},
 		{
 			name: "no files found",
@@ -225,12 +244,13 @@ func TestModel_View(t *testing.T) {
 				FS:        testfs,
 				Directory: ".",
 				Height:    2,
+				Width:     DefaultWidth,
 				st: display.State{
 					Max: 2,
 				},
 				files: []fs.FileInfo{},
 			},
-			want: "No files found, press [Backspace]\n                                       \n",
+			want: "No files found, press [backspace]\n                                                                             \n",
 		},
 		{
 			name: "no files with help",
@@ -240,13 +260,14 @@ func TestModel_View(t *testing.T) {
 				FS:        testfs,
 				Directory: ".",
 				Height:    1,
+				Width:     DefaultWidth,
 				st: display.State{
 					Max: 1,
 				},
 				files:    []fs.FileInfo{},
 				ShowHelp: true,
 			},
-			want: "No files found, press [Backspace]\n\n ↑↓ move•[⏎] select•[⇤] back•[q] quit",
+			want: "No files found, press [backspace]\n\n ↑/↓ move•enter select•backspace back•q/esc/ctrl+c quit•ctrl+r refresh",
 		},
 		{
 			name: "window height less than number of files",
@@ -256,12 +277,29 @@ func TestModel_View(t *testing.T) {
 				FS:        testfs,
 				Directory: ".",
 				Height:    2,
+				Width:     DefaultWidth,
 				st: display.State{
 					Max: 1,
 				},
 				files: allFiles(t, "."),
 			},
-			want: "binary1.bin         3B 01-01-0001 00:00\nbinary2.bin         3B 01-01-0001 00:00\n",
+			want: "binary1.bin                                               3B 01-01-0001 00:00\nbinary2.bin                                               3B 01-01-0001 00:00\n",
+		},
+		{
+			name: "narrow width truncates filename",
+			fields: fields{
+				Globs:     []string{"*"},
+				Selected:  "file1.txt",
+				FS:        fstest.MapFS{"very-long-filename-for-width-check.sqlite": &fstest.MapFile{Data: []byte("x")}},
+				Directory: ".",
+				Height:    1,
+				Width:     50,
+				st: display.State{
+					Max: 1,
+				},
+				files: []fs.FileInfo{must(fs.Stat(fstest.MapFS{"very-long-filename-for-width-check.sqlite": &fstest.MapFile{Data: []byte("x")}}, "very-long-filename-for-width-check.sqlite"))},
+			},
+			want: "very-long-filename-for-w…     1B 01-01-0001 00:00\n",
 		},
 	}
 	for _, tt := range tests {
@@ -272,6 +310,7 @@ func TestModel_View(t *testing.T) {
 				FS:        tt.fields.FS,
 				Directory: tt.fields.Directory,
 				Height:    tt.fields.Height,
+				Width:     tt.fields.Width,
 				ShowHelp:  tt.fields.ShowHelp,
 				Style:     tt.fields.Style,
 				files:     tt.fields.files,
@@ -364,7 +403,7 @@ func TestModel_printDebug(t *testing.T) {
 		{
 			name:   "debug",
 			fields: fields{},
-			wantW:  "cursor: 0\nmin: 0\nmax: 0\nlast: \"\"\ndir: \"\"\nselected: \"\"\n|123456789|123456789|123456789|123456789\n",
+			wantW:  "cursor: 0\nmin: 0\nmax: 0\nlast: \"\"\ndir: \"\"\nselected: \"\"\n|123456789|123456789|123456789|123456789|123456789|123456789|123456789|1234567\n",
 		},
 	}
 	for _, tt := range tests {
@@ -413,14 +452,14 @@ func TestModel_shorten(t *testing.T) {
 			args: args{
 				dirpath: "/home/user/Downloads/Funky/Long/Path/Longer/Than/40/Characters",
 			},
-			want: "/h/u/D/F/L/P/L/T/4/Characters",
+			want: "/home/user/Downloads/Funky/Long/Path/Longer/Than/40/Characters",
 		},
 		{
 			name: "really long path",
 			args: args{
 				dirpath: "/home/user/Downloads/Funky/Long/Path/Longer/Than/40/Characters/And/Even/Longer/Than/That/And/Then/Some/More/And/Even/Longer/Than/That/And/Then/Some",
 			},
-			want: "…/A/E/L/T/T/A/T/S/M/A/E/L/T/T/A/T/Some",
+			want: "/h/u/D/F/L/P/L/T/4/C/A/E/L/T/T/A/T/S/M/A/E/L/T/T/A/T/Some",
 		},
 		{
 			name:    "windows",
@@ -444,7 +483,7 @@ func TestModel_shorten(t *testing.T) {
 			args: args{
 				dirpath: "C:\\P\\M\\2\\C\\S\\P\\N\\M\\R\\O\\W\\O\\T\\S\\F\\K\\L\\M\\N\\O\\P\\Q\\R\\",
 			},
-			want: "…S\\P\\N\\M\\R\\O\\W\\O\\T\\S\\F\\K\\L\\M\\N\\O\\P\\Q\\R",
+			want: "C:\\P\\M\\2\\C\\S\\P\\N\\M\\R\\O\\W\\O\\T\\S\\F\\K\\L\\M\\N\\O\\P\\Q\\R",
 		},
 	}
 	for _, tt := range tests {

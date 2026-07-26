@@ -1,3 +1,18 @@
+// Copyright (c) 2021-2026 Rustam Gilyazov and Contributors.
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU Affero General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU Affero General Public License for more details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 package repository
 
 import (
@@ -14,7 +29,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	_ "modernc.org/sqlite"
 
-	"github.com/rusq/slackdump/v3/internal/chunk"
+	"github.com/rusq/slackdump/v4/internal/chunk"
 )
 
 func init() {
@@ -124,8 +139,10 @@ func prepChunkWithFinal(tc ...testChunk) utilityFn {
 }
 
 // ptr returns a pointer to the value.
+//
+//go:fix inline
 func ptr[T any](v T) *T {
-	return &v
+	return new(v)
 }
 
 func Test_placeholders(t *testing.T) {
@@ -180,7 +197,7 @@ func Test_orNull(t *testing.T) {
 		{
 			name: "not null",
 			args: args[int]{b: true, t: 42},
-			want: ptr(42),
+			want: new(42),
 		},
 	}
 	for _, tt := range tests {

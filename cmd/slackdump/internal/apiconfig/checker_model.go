@@ -1,3 +1,18 @@
+// Copyright (c) 2021-2026 Rustam Gilyazov and Contributors.
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU Affero General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU Affero General Public License for more details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 package apiconfig
 
 import (
@@ -6,7 +21,7 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/rusq/slackdump/v3/cmd/slackdump/internal/ui/bubbles/filemgr"
+	"github.com/rusq/slackdump/v4/cmd/slackdump/internal/ui/bubbles/filemgr"
 )
 
 type checkerModel struct {
@@ -39,7 +54,16 @@ func (m checkerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.view.SetContent(msg.text)
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
-		m.view.Width = msg.Width - filemgr.Width
+		// The file manager expands to the width it receives, so it must be
+		// given only its fixed pane width, not the full terminal width,
+		// otherwise it pushes the viewport off-screen.
+		fmsg := msg
+		fmsg.Width = filemgr.MinWidth
+		var cmd tea.Cmd
+		m.files, cmd = m.files.Update(fmsg)
+		m.view.Width = max(msg.Width-m.files.Width, 0)
+		m.view.Height = m.files.Height // panes share one fixed height
+		return m, cmd
 	case tea.KeyMsg:
 		keymsg = true
 		switch msg.String() {

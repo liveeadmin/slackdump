@@ -1,9 +1,28 @@
+// Copyright (c) 2021-2026 Rustam Gilyazov and Contributors.
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU Affero General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU Affero General Public License for more details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 package dbase
 
 import (
 	"context"
+	"database/sql"
+	"errors"
+	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"sort"
 	"testing"
 	"time"
@@ -11,15 +30,16 @@ import (
 	"github.com/jmoiron/sqlx"
 	"github.com/rusq/slack"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 
-	"github.com/rusq/slackdump/v3/internal/fixtures"
+	"github.com/rusq/slackdump/v4/internal/fixtures"
 
-	"github.com/rusq/slackdump/v3/internal/chunk"
-	"github.com/rusq/slackdump/v3/internal/chunk/backend/dbase/repository"
-	"github.com/rusq/slackdump/v3/internal/chunk/mock_chunk"
-	"github.com/rusq/slackdump/v3/internal/structures"
-	"github.com/rusq/slackdump/v3/internal/testutil"
+	"github.com/rusq/slackdump/v4/internal/chunk"
+	"github.com/rusq/slackdump/v4/internal/chunk/backend/dbase/repository"
+	"github.com/rusq/slackdump/v4/internal/chunk/mock_chunk"
+	"github.com/rusq/slackdump/v4/internal/structures"
+	"github.com/rusq/slackdump/v4/internal/testutil"
 )
 
 func TestOpen(t *testing.T) {
@@ -32,6 +52,7 @@ func TestOpen(t *testing.T) {
 		name    string
 		args    args
 		checkFn utilityFunc
+		fn      any
 		wantErr bool
 	}{
 		{
@@ -43,17 +64,157 @@ func TestOpen(t *testing.T) {
 			checkFn: checkGooseTable,
 			wantErr: false,
 		},
+		{
+			name: "rejects directory",
+			args: args{
+				ctx:  context.Background(),
+				path: t.TempDir(),
+			},
+			wantErr: true,
+		},
+		{
+			name: "rejects directory with OpenRW",
+			args: args{
+				ctx:  context.Background(),
+				path: t.TempDir(),
+			},
+			wantErr: true,
+			fn:      OpenRW,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := Open(tt.args.ctx, tt.args.path)
+			var got *Source
+			var err error
+			if tt.fn != nil {
+				switch fn := tt.fn.(type) {
+				case func(context.Context, string) (*Source, error):
+					got, err = fn(tt.args.ctx, tt.args.path)
+				case func(context.Context, string) (*RWSource, error):
+					rw, err2 := fn(tt.args.ctx, tt.args.path)
+					if err2 == nil {
+						rw.Close()
+					}
+					err = err2
+				default:
+					t.Fatalf("unsupported fn type %T", tt.fn)
+				}
+			} else {
+				got, err = Open(tt.args.ctx, tt.args.path)
+			}
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Open() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
-			defer got.Close()
+			if got != nil {
+				defer got.Close()
+			}
 			if tt.checkFn != nil {
 				tt.checkFn(t, testutil.TestDBDSN(t, tt.args.path))
+			}
+		})
+	}
+}
+
+func Test_validateDBPath(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("permission-denied stat behavior differs on windows")
+	}
+
+	dir := t.TempDir()
+
+	regularFile := filepath.Join(dir, "regular.db")
+	require.NoError(t, os.WriteFile(regularFile, nil, 0644))
+
+	dbDir := t.TempDir()
+	dbFile := filepath.Join(dbDir, "slackdump.sqlite")
+	require.NoError(t, os.WriteFile(dbFile, nil, 0644))
+
+	emptyDir := t.TempDir()
+
+	// Create a symlink to a regular file
+	symlinkFile := filepath.Join(dir, "symlink.db")
+	require.NoError(t, os.Symlink(regularFile, symlinkFile))
+
+	// Create a symlink to a directory
+	symlinkDir := filepath.Join(dir, "symlink_dir")
+	require.NoError(t, os.Symlink(dbDir, symlinkDir))
+
+	lockedDir := filepath.Join(dir, "locked")
+	require.NoError(t, os.Mkdir(lockedDir, 0755))
+	permissionDeniedPath := filepath.Join(lockedDir, "db.sqlite")
+	require.NoError(t, os.Chmod(lockedDir, 0000))
+	t.Cleanup(func() {
+		require.NoError(t, os.Chmod(lockedDir, 0755))
+	})
+	_, permissionProbeErr := os.Stat(permissionDeniedPath)
+	permissionDeniedSupported := errors.Is(permissionProbeErr, os.ErrPermission)
+
+	tests := []struct {
+		name       string
+		path       string
+		wantErr    bool
+		wantErrIs  error
+		errContain string
+	}{
+		{
+			name:    "non-existent path is allowed",
+			path:    filepath.Join(dir, "nonexistent.db"),
+			wantErr: false,
+		},
+		{
+			name:       "directory without slackdump.sqlite",
+			path:       emptyDir,
+			wantErr:    true,
+			wantErrIs:  ErrIsDirectory,
+			errContain: "no slackdump.sqlite found inside",
+		},
+		{
+			name:       "directory with slackdump.sqlite suggests correct path",
+			path:       dbDir,
+			wantErr:    true,
+			wantErrIs:  ErrIsDirectory,
+			errContain: "did you mean",
+		},
+		{
+			name:    "regular file is allowed",
+			path:    regularFile,
+			wantErr: false,
+		},
+		{
+			name:    "symlink to file is allowed (logs warning)",
+			path:    symlinkFile,
+			wantErr: false,
+		},
+		{
+			name:       "symlink to directory follows target and rejects",
+			path:       symlinkDir,
+			wantErr:    true,
+			wantErrIs:  ErrIsDirectory,
+			errContain: "did you mean",
+		},
+		{
+			name:       "permission denied while stating path is returned",
+			path:       permissionDeniedPath,
+			wantErr:    true,
+			wantErrIs:  os.ErrPermission,
+			errContain: "stat:",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.wantErrIs == os.ErrPermission && !permissionDeniedSupported {
+				t.Skipf("skipping permission-denied case: os.Stat(%q) returned %v", permissionDeniedPath, permissionProbeErr)
+			}
+			err := validateDBPath(tt.path)
+			if tt.wantErr {
+				require.Error(t, err)
+				require.ErrorIs(t, err, tt.wantErrIs)
+				if tt.errContain != "" {
+					require.Contains(t, err.Error(), tt.errContain)
+				}
+			} else {
+				require.NoError(t, err)
 			}
 		})
 	}
@@ -194,6 +355,12 @@ func TestSource_Channels(t *testing.T) {
 			sort.Slice(tt.want, func(i, j int) bool {
 				return tt.want[i].Name < tt.want[j].Name
 			})
+			// Channels() always populates Members (nil → []string{})
+			for i := range tt.want {
+				if tt.want[i].Members == nil {
+					tt.want[i].Members = []string{}
+				}
+			}
 			assert.Equal(t, tt.want, got)
 		})
 	}
@@ -358,7 +525,7 @@ func TestSource_Users(t *testing.T) {
 				ctx: t.Context(),
 			},
 			prepFn: prepTestChunk(&chunk.Chunk{Type: chunk.CUsers, Users: fixtures.Load[[]slack.User](fixtures.UsersJSON)}),
-			want:   fixtures.Load[[]slack.User](fixtures.UsersJSON),
+			want:   testutil.RoundTripJSON(t, fixtures.Load[[]slack.User](fixtures.UsersJSON)),
 		},
 	}
 	for _, tt := range tests {
@@ -378,9 +545,7 @@ func TestSource_Users(t *testing.T) {
 			sort.Slice(tt.want, func(i, j int) bool { // users are sorted by ID.
 				return tt.want[i].ID < tt.want[j].ID
 			})
-			if !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("Source.Users() = %v, want %v", got, tt.want)
-			}
+			assert.Equal(t, tt.want, got)
 		})
 	}
 }
@@ -659,6 +824,74 @@ func TestSource_WorkspaceInfo(t *testing.T) {
 				t.Errorf("Source.WorkspaceInfo() = %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestSource_AliasLifecycle(t *testing.T) {
+	conn := testDB(t)
+	s := &RWSource{
+		Source: &Source{
+			conn:     conn,
+			canClose: true,
+		},
+	}
+
+	alias, ok, err := s.Alias("C123")
+	if err != nil {
+		t.Fatalf("Source.Alias() initial error = %v, want nil", err)
+	}
+	if ok {
+		t.Fatalf("Source.Alias() initial ok = %v, want false", ok)
+	}
+	if alias != "" {
+		t.Fatalf("Source.Alias() initial alias = %q, want empty", alias)
+	}
+
+	if err := s.SetAlias("C123", "alpha"); err != nil {
+		t.Fatalf("Source.SetAlias() error = %v, want nil", err)
+	}
+
+	alias, ok, err = s.Alias("C123")
+	if err != nil {
+		t.Fatalf("Source.Alias() after set error = %v, want nil", err)
+	}
+	if !ok {
+		t.Fatalf("Source.Alias() after set ok = %v, want true", ok)
+	}
+	if alias != "alpha" {
+		t.Fatalf("Source.Alias() after set alias = %q, want %q", alias, "alpha")
+	}
+
+	if err := s.SetAlias("C123", "beta"); err != nil {
+		t.Fatalf("Source.SetAlias() update error = %v, want nil", err)
+	}
+
+	aliases, err := s.Aliases()
+	if err != nil {
+		t.Fatalf("Source.Aliases() error = %v, want nil", err)
+	}
+	if got := aliases["C123"]; got != "beta" {
+		t.Fatalf("Source.Aliases()[C123] = %q, want %q", got, "beta")
+	}
+
+	if err := s.DeleteAlias("C123"); err != nil {
+		t.Fatalf("Source.DeleteAlias() error = %v, want nil", err)
+	}
+
+	alias, ok, err = s.Alias("C123")
+	if err != nil {
+		t.Fatalf("Source.Alias() after delete error = %v, want nil", err)
+	}
+	if ok {
+		t.Fatalf("Source.Alias() after delete ok = %v, want false", ok)
+	}
+	if alias != "" {
+		t.Fatalf("Source.Alias() after delete alias = %q, want empty", alias)
+	}
+
+	repo := repository.NewAliasRepository()
+	if _, err := repo.Get(t.Context(), conn, "C123"); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("alias row still present, err = %v; want sql.ErrNoRows", err)
 	}
 }
 

@@ -1,3 +1,18 @@
+// Copyright (c) 2021-2026 Rustam Gilyazov and Contributors.
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU Affero General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU Affero General Public License for more details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 package repository
 
 import (
@@ -11,10 +26,10 @@ import (
 	"github.com/rusq/slack"
 	"github.com/stretchr/testify/assert"
 
-	"github.com/rusq/slackdump/v3/internal/chunk"
-	"github.com/rusq/slackdump/v3/internal/fixtures"
-	"github.com/rusq/slackdump/v3/internal/structures"
-	"github.com/rusq/slackdump/v3/internal/testutil"
+	"github.com/rusq/slackdump/v4/internal/chunk"
+	"github.com/rusq/slackdump/v4/internal/fixtures"
+	"github.com/rusq/slackdump/v4/internal/structures"
+	"github.com/rusq/slackdump/v4/internal/testutil"
 )
 
 // minifyJSON removes all spaces and newlines from the JSON string.
@@ -78,9 +93,9 @@ func TestNewDBMessage(t *testing.T) {
 				ChunkID:     100,
 				ChannelID:   "C123",
 				TS:          "1648085300.726649",
-				ParentID:    ptr[int64](1648085300726649),
-				ThreadTS:    ptr("1648085300.726649"),
-				LatestReply: ptr("1648085301.269949"),
+				ParentID:    new(int64(1648085300726649)),
+				ThreadTS:    new("1648085300.726649"),
+				LatestReply: new("1648085301.269949"),
 				IsParent:    true,
 				Index:       222,
 				NumFiles:    0,
@@ -101,8 +116,8 @@ func TestNewDBMessage(t *testing.T) {
 				ChunkID:   100,
 				ChannelID: "C123",
 				TS:        "1648085301.269949",
-				ParentID:  ptr[int64](1648085300726649),
-				ThreadTS:  ptr("1648085300.726649"),
+				ParentID:  new(int64(1648085300726649)),
+				ThreadTS:  new("1648085300.726649"),
 				IsParent:  false,
 				Index:     222,
 				NumFiles:  1,
@@ -742,7 +757,33 @@ func Test_messageRepository_CountUnfinished(t *testing.T) {
 			},
 			want: 0,
 		},
-		// TODO: what happens if there's just a thread, and no parent?
+		{
+			name: "parent-only final thread chunk completes discovered thread",
+			fields: fields{
+				genericRepository: genericRepository[DBMessage]{DBMessage{}},
+			},
+			args: args{
+				ctx:       t.Context(),
+				conn:      testConn(t),
+				sessionID: 1,
+				channelID: "C123",
+			},
+			prepFn: func(t *testing.T, conn PrepareExtContext) {
+				prepChunkWithFinal(
+					testChunk{typeID: chunk.CMessages, channelID: "C123", final: true},
+					testChunk{typeID: chunk.CThreadMessages, channelID: "C123", final: true},
+				)(t, conn)
+				mr := NewMessageRepository()
+				if err := mr.Insert(t.Context(), conn,
+					dbtmAParent,
+					dbtmAthread,
+				); err != nil {
+					t.Fatalf("insert: %v", err)
+				}
+			},
+			want: 0,
+		},
+		// TODO: audit thread-only chunks that have replies but no channel parent.
 		{
 			name: "only parent messages, no threads",
 			fields: fields{

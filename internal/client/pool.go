@@ -1,3 +1,18 @@
+// Copyright (c) 2021-2026 Rustam Gilyazov and Contributors.
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU Affero General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU Affero General Public License for more details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 package client
 
 import (
@@ -11,11 +26,17 @@ import (
 
 // Pool is a pool of Slack clients that can be used to make API calls.
 // Zero value is not usable, must be initialised with [NewPool].
+//
+// IMPORTANT: Every method on the [Slack] interface must be delegated here.
+// When new methods are added to [Slack], add the corresponding delegation
+// below.  A compile-time assertion below catches interface drift.
 type Pool struct {
 	pool []Slack
 	mu   sync.Mutex
 	strategy
 }
+
+var _ Slack = (*Pool)(nil) // compile-time: Pool must implement Slack
 
 // NewPool wraps the slack.Client with the edge client, so that the edge
 // client can be used as a fallback.
@@ -52,10 +73,6 @@ func (p *Pool) GetConversationRepliesContext(ctx context.Context, params *slack.
 
 func (p *Pool) GetUsersPaginated(options ...slack.GetUsersOption) slack.UserPagination {
 	return p.next().GetUsersPaginated(options...)
-}
-
-func (p *Pool) GetStarredContext(ctx context.Context, params slack.StarsParameters) ([]slack.StarredItem, *slack.Paging, error) {
-	return p.next().GetStarredContext(ctx, params)
 }
 
 func (p *Pool) ListBookmarks(channelID string) ([]slack.Bookmark, error) {
@@ -100,4 +117,8 @@ func (p *Pool) GetFileInfoContext(ctx context.Context, fileID string, count int,
 
 func (p *Pool) GetUserInfoContext(ctx context.Context, user string) (*slack.User, error) {
 	return p.next().GetUserInfoContext(ctx, user)
+}
+
+func (w *Pool) GetUserProfileContext(ctx context.Context, params *slack.GetUserProfileParameters) (*slack.UserProfile, error) {
+	return w.next().GetUserProfileContext(ctx, params)
 }

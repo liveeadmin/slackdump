@@ -6,14 +6,20 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Slackdump Viewer</title>
     {{ template "hx_css" . }}
-    <script src="https://unpkg.com/htmx.org@2.0.4" integrity="sha384-HGfztofotfshcF7+8n44JQL2oJmowVChPTg48S+jvZoztPfvwD79OC/LTtG6dMp+" crossorigin="anonymous"></script>
+    {{ if .Interactive }}<script src="{{ staticasset "htmx.min.js" }}"></script>
+    <script src="{{ staticasset "viewer.js" }}" defer></script>{{ end }}
 </head>
 
 <body>
-    <div class="container">
+    {{ if .Interactive }}
+    <div id="connection-status" class="connection-status" role="alert" aria-live="assertive" hidden>
+        Cannot reach the viewer server. Check that it is running and try again.
+    </div>
+    {{ end }}
+    <div class="container{{ if or .User .ThreadMessages }} thread-open{{ end }}">
         <section class="channel-sidebar">
             <header>
-                <div class="sidebar-header-innner">
+                <div class="sidebar-header-inner">
                     <h1>Slackdump</h1>
                     <small class="subtitle">{{.Type}}: {{.Name}}</small>
                 </div>
@@ -23,7 +29,9 @@
         </section>
         <section id="conversation" class="conversations">
             <!-- Conversations go here -->
-            {{ if .Messages }}
+            {{ if .CanvasActive }}
+            {{ template "hx_canvas" . }}
+            {{ else if .Messages }}
             {{ template "hx_conversation" . }}
             {{ else }}
             <header class="conversation-header">
@@ -36,7 +44,9 @@
         </section>
         <section id="thread" class="thread">
             <!-- Thread messages go here -->
-            {{ if .ThreadMessages }}
+            {{ if .User }}
+            {{ template "hx_user" (userview .User .Interactive) }}
+            {{ else if .ThreadMessages }}
             {{ template "hx_thread" . }}
             {{ end }}
         </section>
@@ -52,10 +62,10 @@
         <p>Channels</p>
     </div>
     {{ range $i, $el := .Public }}
-    <a href="#" hx-get="/archives/{{$el.ID}}" hx-target="#conversation" hx-push-url="true">{{ rendername $el }}</a>
+    {{ template "channel_link" (chlink $el $.Interactive) }}
     {{ end }}
     {{ range $i, $el := .Private }}
-    <a href="#" hx-get="/archives/{{$el.ID}}" hx-target="#conversation" hx-push-url="true">{{ rendername $el }}</a>
+    {{ template "channel_link" (chlink $el $.Interactive) }}
     {{ end }}
 </div>
 {{ end }}
@@ -65,194 +75,235 @@
         <p>Direct</p>
     </div>
 	 {{ range $i, $el := .MPIM }}
-         <a href="#" hx-get="/archives/{{$el.ID}}" hx-target="#conversation" hx-push-url="true">{{ rendername $el }}</a>>
+         {{ template "channel_link" (chlink $el $.Interactive) }}
          {{ end }}
          {{ range $i, $el := .DM }}
-         <a href="#" hx-get="/archives/{{$el.ID}}" hx-target="#conversation" hx-push-url="true">{{ rendername $el }}</a>
+         {{ template "channel_link" (chlink $el $.Interactive) }}
          {{ end }}
 </div>
 {{ end }}
-<script>
-    document.querySelectorAll('.channel-sidebar a').forEach(function (link) {
-        link.addEventListener('click', function (e) {
-            e.preventDefault();
-            // Ensure that all other channels are unmarked as being visually active
-            document.querySelectorAll('.channel-sidebar a').forEach(el => {
-                el.classList.remove('active');
-            });
-
-            link.classList.add('active');
-        });
-    });
-</script>
 {{ end }}
+
+{{ define "channel_link" }}
+<a id="channel-link-{{.Channel.ID}}" href="{{ channelurl .Channel.ID }}"{{ if .Interactive }} hx-get="{{ channelurl .Channel.ID }}" hx-target="#conversation" hx-push-url="true"{{ end }}>{{ channelname .Channel }}</a>
+{{ end }}
+
+{{define "hx_chan_header"}}
+<div id="channel-heading"{{ if .Interactive }} hx-target="this" hx-swap="outerHTML"{{ end }} class="channel-name">
+    <h2>{{ channelname .Conversation }}</h2>
+    {{ if and .CanAlias .Interactive }}
+    <button type="button" class="alias-edit-btn" hx-get="{{ channelurl .Conversation.ID }}/alias/" aria-label="Edit alias">
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>
+    </button>
+    {{ end }}
+</div>
+{{ end }}
+
 
 {{define "hx_conversation"}}
 {{ if .Conversation.ID }}
-{{ $id := .Conversation.ID }}
+{{ template "hx_conversation_body" . }}
+{{ else }}
+<p>No Messages.</p>
+{{ end }}
+{{ end }}
+
+
+{{ define "hx_conversation_body" }}
+{{ template "conversation_header" . }}
+{{ template "message_list" . }}
+{{ end }}
+
+
+{{ define "conversation_header" }}
 <header class="conversation-header">
     <div class="conversation-inner">
-        <h3>{{ rendername .Conversation }}</h3>
-	<p>{{ .Conversation.Topic.Value }}</p>
+        {{ template "hx_chan_header" . }}
+        <p>{{ .Conversation.Topic.Value }}</p>
+        {{ if canvas_present .Conversation }}
+        {{ template "tab_list" . }}
+        {{ end }}
     </div>
 </header>
-<div class="message-list">
+{{ end }}
+
+{{ define "tab_list" }}
+<div class="tab-list" role="tablist" aria-label="Channel views">
+    <button {{ if .Interactive }}hx-get="{{ channelurl .Conversation.ID }}"
+        hx-target="#conversation" hx-swap="innerHTML"{{ end }}
+        class="tab{{ if not .CanvasActive }} selected{{ end }}"
+        role="tab"
+        tabindex="{{ if not .CanvasActive }}0{{ else }}-1{{ end }}"
+        aria-selected="{{ if not .CanvasActive }}true{{ else }}false{{ end }}"
+        aria-controls="tab-panel-conversation"
+        id="tab-btn-conversation">Conversation</button>
+    <button {{ if .Interactive }}hx-get="{{ canvasurl .Conversation.ID }}"
+        hx-target="#conversation" hx-swap="innerHTML"{{ end }}
+        class="tab{{ if .CanvasActive }} selected{{ end }}{{ if not .CanvasAvailable }} disabled{{ end }}"
+        role="tab"
+        tabindex="{{ if .CanvasActive }}0{{ else }}-1{{ end }}"
+        aria-selected="{{ if .CanvasActive }}true{{ else }}false{{ end }}"
+        aria-controls="tab-panel-canvas"
+        id="tab-btn-canvas"
+        {{ if not .CanvasAvailable }}disabled{{ end }}>Canvas</button>
+</div>
+{{ end }}
+
+{{ define "hx_canvas" }}
+{{ template "conversation_header" . }}
+<div class="canvas-container" id="tab-panel-canvas" role="tabpanel" aria-labelledby="tab-btn-canvas" tabindex="0">
+    {{ if .CanvasAvailable }}
+    <iframe class="canvas-frame"
+        src="{{ canvascontenturl .Conversation.ID }}"
+        sandbox="allow-same-origin">
+    </iframe>
+    {{ else }}
+    <div class="canvas-unavailable">
+        <p>Canvas is not available (files were not downloaded).</p>
+    </div>
+    {{ end }}
+</div>
+{{ end }}
+
+{{ define "message_list" }}
+{{ $id := .Conversation.ID }}
+<div class="message-list" id="tab-panel-conversation" role="tabpanel" aria-labelledby="tab-btn-conversation" tabindex="0">
 {{ range $el, $err := .Messages }}
     <article class="message">
         {{ if $err }} <p>Error: {{ $err }}</p> {{ else }}
-            <a class="avatar" href="#" hx-get="/team/{{ $el.User }}" hx-target="#thread">
+            {{ if is_user_msg $el }}
+	        <a class="avatar" href="{{ profileurl $el }}"{{ if $.Interactive }} hx-get="{{ userurl $el.User }}" hx-target="#thread"{{ end }}>
 		    <img class="avatar" src="{{ userpic $el.User }}" />
             </a>
+            {{ else }}
+            <span class="avatar"><img class="avatar" src="{{ userpic $el.User }}" /></span>
+            {{ end }}
             <div class="message-inner">
-                {{ template "render_message" $el }}
-                <!-- TODO: Pass dict through to render_message in order to template threading -->
+                {{ template "render_message" (msgview $id $el) }}
                 {{ if is_thread_start $el }}
                 <footer class="thread-info">
-                <a href="#" hx-get="/archives/{{$id}}/{{ $el.ThreadTimestamp }}" hx-target="#thread">
+                <a href="{{ threadurl $id $el.ThreadTimestamp }}"{{ if $.Interactive }} hx-get="{{ threadurl $id $el.ThreadTimestamp }}" hx-target="#thread"{{ end }}>
                     {{ $el.ReplyCount }} replies
                 </a>
                 <span class="last-reply grey">Latest reply: {{ time $el.LatestReply }}</span>
                 </footer>
-            </div>
             {{ end }}
+            </div>
         {{ end }}
     </article>
+    {{ if and (not $.Interactive) (is_user_msg $el) }}
+    {{ template "static_user_profile" (staticuserview $el) }}
+    {{ end }}
 {{end}}
 </div>
-{{ else }}
-<p>No Messages.</p>
-{{ end }}
-<script>
-    document.querySelectorAll('a.avatar').forEach(function (link) {
-        link.addEventListener('click', function (e) {
-            e.preventDefault();
-            // document.querySelector('.conversations').style.display = 'none';
-            // document.querySelector('.thread').style.display = 'block';
-            document.querySelector('.conversations').style.flex = '0 0 40%';
-            document.querySelector('.thread').style.display = 'block';
-            document.querySelector('.thread').style.flex = '1';
-            // Load thread messages into .thread div here
-        });
-    });
-    document.querySelectorAll('.thread-info a').forEach(function (link) {
-        link.addEventListener('click', function (e) {
-            e.preventDefault();
-            // document.querySelector('.conversations').style.display = 'none';
-            // document.querySelector('.thread').style.display = 'block';
-            document.querySelector('.conversations').style.flex = '0 0 40%';
-            document.querySelector('.thread').style.display = 'block';
-            document.querySelector('.thread').style.flex = '1';
-            // Load thread messages into .thread div here
-        });
-    });
-    document.querySelectorAll('.message-sender a').forEach(function (link) {
-        link.addEventListener('click', function (e) {
-            e.preventDefault();
-            // document.querySelector('.conversations').style.display = 'none';
-            // document.querySelector('.thread').style.display = 'block';
-            document.querySelector('.conversations').style.flex = '0 0 40%';
-            document.querySelector('.thread').style.display = 'block';
-            document.querySelector('.thread').style.flex = '1';
-            // Load thread messages into .thread div here
-        });
-    });
-</script>
-{{ end }}
-
+{{end}}
 
 
 {{define "hx_thread"}}
-<h2>Thread: {{ .ThreadID }}</h2>
-<p><a id="close-thread" href="#">[X]</a></p>
-<p><a id="thread-link" href="/archives/{{.Conversation.ID}}/{{ .ThreadID }}#{{.ThreadID}}">Link to this thread</a></p>
+<header class="thread-header">
+    <h2>Thread: {{ .ThreadID }}</h2>
+    {{ if .Interactive }}<button type="button" id="close-thread" class="close-button" data-close-panel aria-label="Close thread panel">&times;</button>{{ else }}<a id="close-thread" class="close-button" href="{{ channelurl .Conversation.ID }}" aria-label="Close thread panel">&times;</a>{{ end }}
+</header>
+<p class="thread-link-row"><a id="thread-link" href="{{ threadmsgurl .Conversation.ID .ThreadID .ThreadID }}">Link to this thread</a></p>
 <div class="message-list">
     {{ range $el, $err := .ThreadMessages }}
     <article class="message">
         {{ if $err }} <p>Error: {{ $err }}</p> {{ else }}
-        <a class="avatar" href="#" hx-get="/team/{{ $el.User }}" hx-target="#thread">
+        {{ if is_user_msg $el }}
+	    <a class="avatar" href="{{ profileurl $el }}"{{ if $.Interactive }} hx-get="{{ userurl $el.User }}" hx-target="#thread"{{ end }}>
 		<img class="avatar" src="{{ userpic $el.User }}" />
         </a>
+        {{ else }}
+        <span class="avatar"><img class="avatar" src="{{ userpic $el.User }}" /></span>
+        {{ end }}
         <div class="message-inner">
-            {{ template "render_message" $el }}
+            {{ template "render_message" (msgview "" $el) }}
         </div>
         {{ end }}
     </article>
+    {{ if and (not $.Interactive) (is_user_msg $el) }}
+    {{ template "static_user_profile" (staticuserview $el) }}
+    {{ end }}
     {{end}}
 </div>
-<script>
-    document.getElementById('close-thread').addEventListener('click', function (e) {
-        e.preventDefault();
-        document.querySelector('.conversations').style.flex = '1';
-        document.querySelector('.thread').style.display = 'none';
-    });
-</script>
 {{end}}
 
 {{ define "render_message" }}
-<header class="message-header" id="{{.Timestamp}}">
+<header class="message-header" id="{{.Msg.Timestamp}}">
     <span class="message-sender">
-        {{ if ( or ( is_app_msg . ) ( not .User ) ) -}}
-        	{{ username . }}
+        {{ if ( or ( is_app_msg .Msg ) ( not .Msg.User ) ) -}}
+        	{{ username .Msg }}
         {{- else -}}
-		<a href="#" hx-get="/team/{{ .User }}" hx-target="#thread">{{ username . }}</a>
+		<a href="{{ profileurl .Msg }}"{{ if $.Interactive }} hx-get="{{ userurl .Msg.User }}" hx-target="#thread"{{ end }}>{{ username .Msg }}</a>
         {{- end }}
     </span>
-    <span class="message-timestamp grey">{{ time .Timestamp }}</span>
-    <span class="message-link"><a href="#{{.Timestamp}}">#</a></span>
+    <span class="message-timestamp grey">{{ time .Msg.Timestamp }}</span>
+    <span class="message-link"><a href="#{{.Msg.Timestamp}}">#</a></span>
 </header>
+{{- if and .ChannelID .Msg.ThreadTimestamp (ne .Msg.ThreadTimestamp .Msg.Timestamp) }}
+<div class="reply-context">
+    ↩ <a href="{{ channelmsgurl .ChannelID .Msg.ThreadTimestamp }}">replying to {{ time .Msg.ThreadTimestamp }}</a>
+</div>
+{{- end }}
 <div class="message-content">
-    <header id="{{.Timestamp}}">
-        <span class="message-sender">
-            {{if is_app_msg . -}}
-            {{ username . }}
-            {{- else -}}
-            <a href="#" hx-get="/team/{{ .User }}" hx-target="#thread"> {{ username . }}</a>
-            {{- end }}
-        </span>
-        <span class="message-timestamp grey"><a href="#{{.Timestamp}}">{{ time .Timestamp }}</a></span>
-    </header>
-    <div class="message-content">
-        <p>{{ render . }}</p>
-    </div>
+    <p>{{ render .Msg }}</p>
 </div>
 {{ end }}
 
 
 
+{{ define "channel_link_oob" }}
+<a id="channel-link-{{.Conversation.ID}}" href="{{ channelurl .Conversation.ID }}"{{ if .Interactive }} hx-get="{{ channelurl .Conversation.ID }}" hx-target="#conversation" hx-push-url="true" hx-swap-oob="outerHTML"{{ end }}>{{ channelname .Conversation }}</a>
+{{ end }}
+
 {{ define "hx_user" }}
-<div class="user-profile-container">
+<div class="user-profile-container{{ if .TargetID }} static-user-profile-panel{{ end }}"{{ if .TargetID }} id="{{ .TargetID }}"{{ end }}>
     <header class="user-profile-header">
         <div class="user-profile-header-inner">
             <h3>Profile</h3>
-            <a id="close-user" href="#">[X]</a>
+            {{ if $.Interactive }}<button type="button" id="close-user" class="close-button" data-close-panel aria-label="Close profile panel">&times;</button>{{ else if .CloseHref }}<a href="{{ .CloseHref }}" class="close-button" aria-label="Close profile panel">&times;</a>{{ end }}
         </div>
     </header>
     <article class="user-profile">
-        {{ if . }}
+        {{ if .User }}
+            {{ $pic := userpic .User.ID }}
             <div class="profile-image-container">
-                <a href="{{ .Profile.Image512 }}" target="_blank">
-                    <img src="{{ .Profile.Image512 }}" alt="{{ displayname .ID }}" class="profile-image">
+                <a href="{{ $pic }}" target="_blank">
+                    <img src="{{ $pic }}" alt="{{ displayname .User.ID }}" class="profile-image">
                 </a>
             </div>
 
-            <h1 class="profile-name">{{ displayname .ID }}</h1>
+            <h1 class="profile-name">{{ displayname .User.ID }}</h1>
 
             <ul class="profile-details">
-                {{ if .Profile.RealName }}<li>Real name: <span>{{ .Profile.RealName }}</span></li>{{ end }}
-                {{ if .Profile.Email }}<li>Email: <span>{{ .Profile.Email }}</span></li>{{ end }}
-                {{ if .Profile.Skype }}<li>Skype: <span>{{ .Profile.Skype }}</span></li>{{ end }}
-                {{ if .Profile.Team }}<li>Team: <span>{{ .Profile.Team }}</span></li>{{ end }}
+                {{ if .User.Profile.RealName }}<li>Real name: <span>{{ .User.Profile.RealName }}</span></li>{{ end }}
+                {{ if .User.Profile.Email }}<li>Email: <span>{{ .User.Profile.Email }}</span></li>{{ end }}
+                {{ if .User.Profile.Skype }}<li>Skype: <span>{{ .User.Profile.Skype }}</span></li>{{ end }}
+                {{ if .User.Profile.Team }}<li>Team: <span>{{ .User.Profile.Team }}</span></li>{{ end }}
             </ul>
         {{ else }}
             <p class="unknown-user">Unknown</p>
         {{ end }}
     </article>
 </div>
-<script>
-    document.getElementById('close-user').addEventListener('click', function (e) {
-        e.preventDefault();
-        document.querySelector('.conversations').style.flex = '1';
-        document.querySelector('.thread').style.display = 'none';
-    });
-</script>
+{{ end }}
+
+{{ define "static_user_profile" }}
+{{ template "hx_user" . }}
+{{ end }}
+
+
+{{ define "hx_alias" }}
+<form id="channel-heading" hx-put="{{ channelurl .Conversation.ID }}/alias/" hx-target="this" hx-swap="outerHTML" class="channel-name alias-form">
+    <label for="alias">Alias:</label>
+    <input type="text" id="alias" name="alias" value="{{ .Alias }}" maxlength="30" autofocus{{ if .AliasError }} class="input-error"{{ end }}>
+    <button type="submit">Save</button>
+    <button type="button" id="delete-alias" hx-delete="{{ channelurl .Conversation.ID }}/alias/" hx-target="#channel-heading" hx-swap="outerHTML">Delete</button>
+    {{ if .AliasError }}<span class="field-error">{{ .AliasError }}</span>{{ end }}
+</form>
+{{ end }}
+
+{{ define "hx_alias_response" }}
+{{ template "hx_chan_header" . }}
+{{ template "channel_link_oob" . }}
 {{ end }}

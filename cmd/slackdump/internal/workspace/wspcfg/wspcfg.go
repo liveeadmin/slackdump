@@ -1,3 +1,18 @@
+// Copyright (c) 2021-2026 Rustam Gilyazov and Contributors.
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU Affero General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU Affero General Public License for more details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 // Package wspcfg contains workspace configuration variables.
 package wspcfg
 
@@ -7,8 +22,8 @@ import (
 
 	"github.com/rusq/osenv/v2"
 
-	"github.com/rusq/slackdump/v3/auth"
-	"github.com/rusq/slackdump/v3/auth/browser"
+	"github.com/rusq/slackdump/v4/auth"
+	"github.com/rusq/slackdump/v4/auth/browser"
 )
 
 var (
@@ -17,9 +32,17 @@ var (
 	LoginTimeout    time.Duration = browser.DefLoginTimeout // overall login time.
 	HeadlessTimeout time.Duration = auth.RODHeadlessTimeout // net interaction time.
 	RODUserAgent    string                                  // when empty, slackauth uses the default user agent.
+	BundledBrowser  bool                                    // when true, forces the launcher-managed bundled Chromium for interactive login.
 	// playwright stuff
 	Browser       browser.Browser
 	LegacyBrowser bool
+)
+
+var (
+	rodWithHeadlessTimeout = auth.RODWithRODHeadlessTimeout
+	rodWithUserAgent       = auth.RODWithUserAgent
+	rodWithBundledBrowser  = auth.RODWithBundledBrowser
+	rodWithInteractiveAuto = auth.RODWithInteractiveBrowserAuto
 )
 
 func SetWspFlags(fs *flag.FlagSet) {
@@ -30,4 +53,16 @@ func SetWspFlags(fs *flag.FlagSet) {
 	fs.DurationVar(&HeadlessTimeout, "autologin-timeout", HeadlessTimeout, "headless autologin `timeout`, without the browser starting time, just the interaction time")
 	fs.BoolVar(&LegacyBrowser, "legacy-browser", false, "use legacy browser automation (playwright) for EZ-Login 3000")
 	fs.StringVar(&RODUserAgent, "user-agent", "", "override the user agent string for EZ-Login 3000")
+	fs.BoolVar(&BundledBrowser, "bundled-browser", false, "force the launcher-managed bundled Chromium for interactive login (disables system browser auto-detection)")
+}
+
+// RodAuthOptions returns auth options shared by all ROD-based workspace login
+// entry points, keeping CLI and TUI behaviour aligned.
+func RodAuthOptions() []auth.Option {
+	return []auth.Option{
+		rodWithHeadlessTimeout(HeadlessTimeout),
+		rodWithUserAgent(RODUserAgent),
+		rodWithBundledBrowser(BundledBrowser),
+		rodWithInteractiveAuto(!BundledBrowser),
+	}
 }

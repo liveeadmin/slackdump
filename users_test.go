@@ -1,3 +1,18 @@
+// Copyright (c) 2021-2026 Rustam Gilyazov and Contributors.
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU Affero General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU Affero General Public License for more details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 package slackdump
 
 import (
@@ -11,11 +26,11 @@ import (
 	"github.com/rusq/slack"
 	"go.uber.org/mock/gomock"
 
-	"github.com/rusq/slackdump/v3/internal/client/mock_client"
-	"github.com/rusq/slackdump/v3/internal/fixtures"
-	"github.com/rusq/slackdump/v3/internal/network"
-	"github.com/rusq/slackdump/v3/internal/structures"
-	"github.com/rusq/slackdump/v3/types"
+	"github.com/rusq/slackdump/v4/internal/client/mock_client"
+	"github.com/rusq/slackdump/v4/internal/fixtures"
+	"github.com/rusq/slackdump/v4/internal/network"
+	"github.com/rusq/slackdump/v4/internal/structures"
+	"github.com/rusq/slackdump/v4/types"
 )
 
 const testSuffix = "UNIT"
@@ -58,7 +73,7 @@ func TestSession_fetchUsers(t *testing.T) {
 		name     string
 		fields   fields
 		args     args
-		expectFn func(*mock_client.MockSlackClienter)
+		expectFn func(*mock_client.MockSlack)
 		want     types.Users
 		wantErr  bool
 	}{
@@ -66,7 +81,7 @@ func TestSession_fetchUsers(t *testing.T) {
 			"ok",
 			fields{config: defConfig},
 			args{t.Context()},
-			func(mc *mock_client.MockSlackClienter) {
+			func(mc *mock_client.MockSlack) {
 				mc.EXPECT().GetUsersContext(gomock.Any()).Return([]slack.User(testUsers), nil)
 			},
 			testUsers,
@@ -76,7 +91,7 @@ func TestSession_fetchUsers(t *testing.T) {
 			"api error",
 			fields{config: defConfig},
 			args{t.Context()},
-			func(mc *mock_client.MockSlackClienter) {
+			func(mc *mock_client.MockSlack) {
 				mc.EXPECT().GetUsersContext(gomock.Any()).Return(nil, errors.New("i don't think so"))
 			},
 			nil,
@@ -86,7 +101,7 @@ func TestSession_fetchUsers(t *testing.T) {
 			"zero users",
 			fields{config: defConfig},
 			args{t.Context()},
-			func(mc *mock_client.MockSlackClienter) {
+			func(mc *mock_client.MockSlack) {
 				mc.EXPECT().GetUsersContext(gomock.Any()).Return([]slack.User{}, nil)
 			},
 			nil,
@@ -95,7 +110,7 @@ func TestSession_fetchUsers(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mc := mock_client.NewMockSlackClienter(gomock.NewController(t))
+			mc := mock_client.NewMockSlack(gomock.NewController(t))
 
 			tt.expectFn(mc)
 
@@ -127,7 +142,7 @@ func TestSession_GetUsers(t *testing.T) {
 		name     string
 		fields   fields
 		args     args
-		expectFn func(*mock_client.MockSlackClienter)
+		expectFn func(*mock_client.MockSlack)
 		want     types.Users
 		wantErr  bool
 	}{
@@ -141,7 +156,7 @@ func TestSession_GetUsers(t *testing.T) {
 				usercache: usercache{},
 			},
 			args{t.Context()},
-			func(mc *mock_client.MockSlackClienter) {
+			func(mc *mock_client.MockSlack) {
 				mc.EXPECT().GetUsersContext(gomock.Any()).Return([]slack.User(testUsers), nil)
 			},
 			testUsers,
@@ -160,16 +175,17 @@ func TestSession_GetUsers(t *testing.T) {
 				},
 			},
 			args{t.Context()},
-			func(mc *mock_client.MockSlackClienter) {
+			func(mc *mock_client.MockSlack) {
 				// we don't expect any API calls
 			},
 			testUsers,
 			false,
 		},
 	}
-	for _, tt := range tests {
+	for i := range tests {
+		tt := &tests[i]
 		t.Run(tt.name, func(t *testing.T) {
-			mc := mock_client.NewMockSlackClienter(gomock.NewController(t))
+			mc := mock_client.NewMockSlack(gomock.NewController(t))
 
 			tt.expectFn(mc)
 

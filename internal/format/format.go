@@ -1,3 +1,18 @@
+// Copyright (c) 2021-2026 Rustam Gilyazov and Contributors.
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU Affero General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU Affero General Public License for more details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 // Package format provides formatting functions for different output format
 // types.
 package format
@@ -13,13 +28,13 @@ import (
 
 	"github.com/rusq/slack"
 
-	"github.com/rusq/slackdump/v3/internal/structures"
-	"github.com/rusq/slackdump/v3/types"
+	"github.com/rusq/slackdump/v4/internal/structures"
+	"github.com/rusq/slackdump/v4/types"
 )
 
 // Type is the converter type.
 //
-//go:generate stringer -type Type -trimprefix C format.go
+//go:generate go tool stringer -type Type -trimprefix C format.go
 type Type int
 
 const (
@@ -78,7 +93,7 @@ var converters = make(map[Type]func(opts ...Option) Formatter)
 
 func (e *Type) Set(v string) error {
 	v = strings.ToLower(v)
-	for i := 0; i < len(_Type_index)-1; i++ {
+	for i := range len(_Type_index) - 1 {
 		if strings.ToLower(_Type_name[_Type_index[i]:_Type_index[i+1]]) == v {
 			*e = Type(i)
 			return nil

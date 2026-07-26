@@ -1,3 +1,18 @@
+// Copyright (c) 2021-2026 Rustam Gilyazov and Contributors.
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU Affero General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU Affero General Public License for more details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 package control
 
 import (
@@ -10,10 +25,11 @@ import (
 	"github.com/stretchr/testify/assert"
 	"go.uber.org/mock/gomock"
 
-	"github.com/rusq/slackdump/v3/internal/chunk/control/mock_control"
-	"github.com/rusq/slackdump/v3/internal/structures"
-	"github.com/rusq/slackdump/v3/mocks/mock_processor"
-	"github.com/rusq/slackdump/v3/processor"
+	"github.com/rusq/slackdump/v4/internal/chunk/control/mock_control"
+	"github.com/rusq/slackdump/v4/internal/structures"
+	"github.com/rusq/slackdump/v4/mocks/mock_processor"
+	"github.com/rusq/slackdump/v4/processor"
+	"github.com/rusq/slackdump/v4/stream"
 )
 
 func TestController_Close(t *testing.T) {
@@ -25,7 +41,7 @@ func TestController_Close(t *testing.T) {
 	tests := []struct {
 		name     string
 		fields   fields
-		expectFn func(*mock_processor.MockFiler, *mock_processor.MockAvatars, *mock_control.MockEncodeReferenceCloser)
+		expectFn func(*mock_processor.MockFiler, *mock_processor.MockAvatars, *mock_control.MockEncodeReferenceFinisher)
 		wantErr  bool
 	}{
 		{
@@ -33,7 +49,7 @@ func TestController_Close(t *testing.T) {
 			fields: fields{
 				s: &mock_control.MockStreamer{},
 			},
-			expectFn: func(f *mock_processor.MockFiler, a *mock_processor.MockAvatars, erc *mock_control.MockEncodeReferenceCloser) {
+			expectFn: func(f *mock_processor.MockFiler, a *mock_processor.MockAvatars, erc *mock_control.MockEncodeReferenceFinisher) {
 				f.EXPECT().Close().Return(nil)
 				a.EXPECT().Close().Return(nil)
 				erc.EXPECT().Close().Return(nil)
@@ -45,7 +61,7 @@ func TestController_Close(t *testing.T) {
 			fields: fields{
 				s: &mock_control.MockStreamer{},
 			},
-			expectFn: func(f *mock_processor.MockFiler, a *mock_processor.MockAvatars, erc *mock_control.MockEncodeReferenceCloser) {
+			expectFn: func(f *mock_processor.MockFiler, a *mock_processor.MockAvatars, erc *mock_control.MockEncodeReferenceFinisher) {
 				f.EXPECT().Close().Return(assert.AnError)
 				a.EXPECT().Close().Return(nil)
 				erc.EXPECT().Close().Return(nil)
@@ -57,7 +73,7 @@ func TestController_Close(t *testing.T) {
 			fields: fields{
 				s: &mock_control.MockStreamer{},
 			},
-			expectFn: func(f *mock_processor.MockFiler, a *mock_processor.MockAvatars, erc *mock_control.MockEncodeReferenceCloser) {
+			expectFn: func(f *mock_processor.MockFiler, a *mock_processor.MockAvatars, erc *mock_control.MockEncodeReferenceFinisher) {
 				f.EXPECT().Close().Return(nil)
 				a.EXPECT().Close().Return(assert.AnError)
 				erc.EXPECT().Close().Return(nil)
@@ -69,7 +85,7 @@ func TestController_Close(t *testing.T) {
 			fields: fields{
 				s: &mock_control.MockStreamer{},
 			},
-			expectFn: func(f *mock_processor.MockFiler, a *mock_processor.MockAvatars, erc *mock_control.MockEncodeReferenceCloser) {
+			expectFn: func(f *mock_processor.MockFiler, a *mock_processor.MockAvatars, erc *mock_control.MockEncodeReferenceFinisher) {
 				f.EXPECT().Close().Return(nil)
 				a.EXPECT().Close().Return(nil)
 				erc.EXPECT().Close().Return(assert.AnError)
@@ -83,7 +99,7 @@ func TestController_Close(t *testing.T) {
 				ctrl = gomock.NewController(t)
 				f    = mock_processor.NewMockFiler(ctrl)
 				a    = mock_processor.NewMockAvatars(ctrl)
-				erc  = mock_control.NewMockEncodeReferenceCloser(ctrl)
+				erc  = mock_control.NewMockEncodeReferenceFinisher(ctrl)
 			)
 			if tt.expectFn != nil {
 				tt.expectFn(f, a, erc)
@@ -103,6 +119,80 @@ func TestController_Close(t *testing.T) {
 	}
 }
 
+func TestController_Finish(t *testing.T) {
+	tests := []struct {
+		name     string
+		expectFn func(*mock_processor.MockFiler, *mock_processor.MockAvatars, *mock_control.MockEncodeReferenceFinisher)
+		finishN  int
+		wantErr  bool
+	}{
+		{
+			name: "finalises encoder after closing resources",
+			expectFn: func(f *mock_processor.MockFiler, a *mock_processor.MockAvatars, erc *mock_control.MockEncodeReferenceFinisher) {
+				gomock.InOrder(
+					f.EXPECT().Close().Return(nil),
+					a.EXPECT().Close().Return(nil),
+					erc.EXPECT().Finish().Return(nil),
+				)
+			},
+			finishN: 1,
+			wantErr: false,
+		},
+		{
+			name: "aggregates resource and finish errors",
+			expectFn: func(f *mock_processor.MockFiler, a *mock_processor.MockAvatars, erc *mock_control.MockEncodeReferenceFinisher) {
+				gomock.InOrder(
+					f.EXPECT().Close().Return(assert.AnError),
+					a.EXPECT().Close().Return(nil),
+					erc.EXPECT().Finish().Return(assert.AnError),
+				)
+			},
+			finishN: 1,
+			wantErr: true,
+		},
+		{
+			name: "finish is idempotent",
+			expectFn: func(f *mock_processor.MockFiler, a *mock_processor.MockAvatars, erc *mock_control.MockEncodeReferenceFinisher) {
+				gomock.InOrder(
+					f.EXPECT().Close().Return(nil),
+					a.EXPECT().Close().Return(nil),
+					erc.EXPECT().Finish().Return(nil),
+				)
+			},
+			finishN: 2,
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var (
+				ctrl = gomock.NewController(t)
+				f    = mock_processor.NewMockFiler(ctrl)
+				a    = mock_processor.NewMockAvatars(ctrl)
+				erc  = mock_control.NewMockEncodeReferenceFinisher(ctrl)
+			)
+			if tt.expectFn != nil {
+				tt.expectFn(f, a, erc)
+			}
+			c := &Controller{
+				erc: erc,
+				s:   &mock_control.MockStreamer{},
+				options: options{
+					filer: f,
+					avp:   a,
+				},
+			}
+
+			for i := range tt.finishN {
+				if err := c.Finish(); (err != nil) != tt.wantErr {
+					t.Errorf("call %d: Controller.Finish() error = %v, wantErr %v", i+1, err, tt.wantErr)
+				}
+			}
+		})
+	}
+}
+
 func TestController_Run(t *testing.T) {
 	type args struct {
 		ctx  context.Context
@@ -116,7 +206,7 @@ func TestController_Run(t *testing.T) {
 			*mock_processor.MockFiler,
 			*mock_processor.MockAvatars,
 			*mock_control.MockExportTransformer,
-			*mock_control.MockEncodeReferenceCloser,
+			*mock_control.MockEncodeReferenceFinisher,
 		)
 		wantErr bool
 	}{
@@ -126,9 +216,10 @@ func TestController_Run(t *testing.T) {
 				ctx:  t.Context(),
 				list: &structures.EntityList{},
 			},
-			expectFn: func(s *mock_control.MockStreamer, f *mock_processor.MockFiler, a *mock_processor.MockAvatars, tf *mock_control.MockExportTransformer, erc *mock_control.MockEncodeReferenceCloser) {
+			expectFn: func(s *mock_control.MockStreamer, f *mock_processor.MockFiler, a *mock_processor.MockAvatars, tf *mock_control.MockExportTransformer, erc *mock_control.MockEncodeReferenceFinisher) {
 				testUsers := []slack.User{testUser1, testUser2}
 				// called by the runner
+				s.EXPECT().ListChannelsEx(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(stream.ErrOpNotSupported)
 				s.EXPECT().ListChannels(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
 				s.EXPECT().Users(gomock.Any(), gomock.Any()).DoAndReturn(func(ctx context.Context, proc processor.Users, opt ...slack.GetUsersOption) error {
 					proc.Users(ctx, testUsers)
@@ -155,8 +246,9 @@ func TestController_Run(t *testing.T) {
 				ctx:  t.Context(),
 				list: &structures.EntityList{},
 			},
-			expectFn: func(s *mock_control.MockStreamer, f *mock_processor.MockFiler, a *mock_processor.MockAvatars, tf *mock_control.MockExportTransformer, erc *mock_control.MockEncodeReferenceCloser) {
+			expectFn: func(s *mock_control.MockStreamer, f *mock_processor.MockFiler, a *mock_processor.MockAvatars, tf *mock_control.MockExportTransformer, erc *mock_control.MockEncodeReferenceFinisher) {
 				// called by the runner
+				s.EXPECT().ListChannelsEx(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(stream.ErrOpNotSupported)
 				s.EXPECT().ListChannels(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
 				s.EXPECT().Users(gomock.Any(), gomock.Any()).Return(assert.AnError)
 				s.EXPECT().Conversations(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
@@ -176,7 +268,7 @@ func TestController_Run(t *testing.T) {
 				f    = mock_processor.NewMockFiler(ctrl)
 				a    = mock_processor.NewMockAvatars(ctrl)
 				tf   = mock_control.NewMockExportTransformer(ctrl)
-				erc  = mock_control.NewMockEncodeReferenceCloser(ctrl)
+				erc  = mock_control.NewMockEncodeReferenceFinisher(ctrl)
 			)
 			if tt.expectFn != nil {
 				tt.expectFn(s, f, a, tf, erc)
@@ -210,7 +302,7 @@ func TestController_RunNoTransform(t *testing.T) {
 			*mock_processor.MockFiler,
 			*mock_processor.MockAvatars,
 			*mock_control.MockExportTransformer,
-			*mock_control.MockEncodeReferenceCloser,
+			*mock_control.MockEncodeReferenceFinisher,
 		)
 		wantErr bool
 	}{
@@ -220,9 +312,10 @@ func TestController_RunNoTransform(t *testing.T) {
 				ctx:  t.Context(),
 				list: &structures.EntityList{},
 			},
-			expectFn: func(s *mock_control.MockStreamer, f *mock_processor.MockFiler, a *mock_processor.MockAvatars, tf *mock_control.MockExportTransformer, erc *mock_control.MockEncodeReferenceCloser) {
+			expectFn: func(s *mock_control.MockStreamer, f *mock_processor.MockFiler, a *mock_processor.MockAvatars, tf *mock_control.MockExportTransformer, erc *mock_control.MockEncodeReferenceFinisher) {
 				testUsers := []slack.User{testUser1, testUser2}
 				// called by the runner
+				s.EXPECT().ListChannelsEx(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(stream.ErrOpNotSupported)
 				s.EXPECT().ListChannels(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
 				s.EXPECT().Users(gomock.Any(), gomock.Any()).DoAndReturn(func(ctx context.Context, proc processor.Users, opt ...slack.GetUsersOption) error {
 					proc.Users(ctx, testUsers)
@@ -252,8 +345,9 @@ func TestController_RunNoTransform(t *testing.T) {
 				ctx:  t.Context(),
 				list: &structures.EntityList{},
 			},
-			expectFn: func(s *mock_control.MockStreamer, f *mock_processor.MockFiler, a *mock_processor.MockAvatars, tf *mock_control.MockExportTransformer, erc *mock_control.MockEncodeReferenceCloser) {
+			expectFn: func(s *mock_control.MockStreamer, f *mock_processor.MockFiler, a *mock_processor.MockAvatars, tf *mock_control.MockExportTransformer, erc *mock_control.MockEncodeReferenceFinisher) {
 				// called by the runner
+				s.EXPECT().ListChannelsEx(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(stream.ErrOpNotSupported)
 				s.EXPECT().ListChannels(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
 				s.EXPECT().Users(gomock.Any(), gomock.Any()).Return(assert.AnError)
 				s.EXPECT().Conversations(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
@@ -276,7 +370,7 @@ func TestController_RunNoTransform(t *testing.T) {
 				f    = mock_processor.NewMockFiler(ctrl)
 				a    = mock_processor.NewMockAvatars(ctrl)
 				tf   = mock_control.NewMockExportTransformer(ctrl)
-				erc  = mock_control.NewMockEncodeReferenceCloser(ctrl)
+				erc  = mock_control.NewMockEncodeReferenceFinisher(ctrl)
 			)
 			if tt.expectFn != nil {
 				tt.expectFn(s, f, a, tf, erc)
@@ -302,7 +396,7 @@ func TestNew(t *testing.T) {
 	type args struct {
 		ctx  context.Context
 		s    Streamer
-		erc  EncodeReferenceCloser
+		erc  EncodeReferenceFinisher
 		opts []Option
 	}
 	tests := []struct {
@@ -316,10 +410,10 @@ func TestNew(t *testing.T) {
 			args: args{
 				ctx: t.Context(),
 				s:   &mock_control.MockStreamer{},
-				erc: &mock_control.MockEncodeReferenceCloser{},
+				erc: &mock_control.MockEncodeReferenceFinisher{},
 			},
 			want: &Controller{
-				erc: &mock_control.MockEncodeReferenceCloser{},
+				erc: &mock_control.MockEncodeReferenceFinisher{},
 				s:   &mock_control.MockStreamer{},
 				options: options{
 					lg:    slog.Default(),
@@ -335,14 +429,14 @@ func TestNew(t *testing.T) {
 			args: args{
 				ctx: t.Context(),
 				s:   &mock_control.MockStreamer{},
-				erc: &mock_control.MockEncodeReferenceCloser{},
+				erc: &mock_control.MockEncodeReferenceFinisher{},
 				opts: []Option{
 					WithAvatarProcessor(&mock_processor.MockAvatars{}),
 					WithFiler(&mock_processor.MockFiler{}),
 				},
 			},
 			want: &Controller{
-				erc: &mock_control.MockEncodeReferenceCloser{},
+				erc: &mock_control.MockEncodeReferenceFinisher{},
 				s:   &mock_control.MockStreamer{},
 				options: options{
 					lg:    slog.Default(),
@@ -370,7 +464,7 @@ func TestNew(t *testing.T) {
 
 func TestController_newConvTransformer(t *testing.T) {
 	type fields struct {
-		erc     EncodeReferenceCloser
+		erc     EncodeReferenceFinisher
 		s       Streamer
 		options options
 	}
@@ -412,7 +506,7 @@ func TestController_Search(t *testing.T) {
 			*mock_processor.MockFiler,
 			*mock_processor.MockAvatars,
 			*mock_control.MockExportTransformer,
-			*mock_control.MockEncodeReferenceCloser,
+			*mock_control.MockEncodeReferenceFinisher,
 		)
 		args    args
 		wantErr bool
@@ -424,7 +518,7 @@ func TestController_Search(t *testing.T) {
 				query: "test",
 				stype: SMessages | SFiles,
 			},
-			expectFn: func(s *mock_control.MockStreamer, f *mock_processor.MockFiler, a *mock_processor.MockAvatars, tf *mock_control.MockExportTransformer, erc *mock_control.MockEncodeReferenceCloser) {
+			expectFn: func(s *mock_control.MockStreamer, f *mock_processor.MockFiler, a *mock_processor.MockAvatars, tf *mock_control.MockExportTransformer, erc *mock_control.MockEncodeReferenceFinisher) {
 				s.EXPECT().WorkspaceInfo(gomock.Any(), gomock.Any()).Return(nil)
 				s.EXPECT().SearchMessages(gomock.Any(), gomock.Any(), "test").Return(nil)
 				s.EXPECT().SearchFiles(gomock.Any(), gomock.Any(), "test").Return(nil)
@@ -438,7 +532,7 @@ func TestController_Search(t *testing.T) {
 				query: "test",
 				stype: SMessages | SFiles,
 			},
-			expectFn: func(s *mock_control.MockStreamer, f *mock_processor.MockFiler, a *mock_processor.MockAvatars, tf *mock_control.MockExportTransformer, erc *mock_control.MockEncodeReferenceCloser) {
+			expectFn: func(s *mock_control.MockStreamer, f *mock_processor.MockFiler, a *mock_processor.MockAvatars, tf *mock_control.MockExportTransformer, erc *mock_control.MockEncodeReferenceFinisher) {
 				s.EXPECT().WorkspaceInfo(gomock.Any(), gomock.Any()).Return(nil)
 				s.EXPECT().SearchMessages(gomock.Any(), gomock.Any(), "test").Return(assert.AnError)
 				s.EXPECT().SearchFiles(gomock.Any(), gomock.Any(), "test").Return(nil)
@@ -452,7 +546,7 @@ func TestController_Search(t *testing.T) {
 				query: "test",
 				stype: SMessages | SFiles,
 			},
-			expectFn: func(s *mock_control.MockStreamer, f *mock_processor.MockFiler, a *mock_processor.MockAvatars, tf *mock_control.MockExportTransformer, erc *mock_control.MockEncodeReferenceCloser) {
+			expectFn: func(s *mock_control.MockStreamer, f *mock_processor.MockFiler, a *mock_processor.MockAvatars, tf *mock_control.MockExportTransformer, erc *mock_control.MockEncodeReferenceFinisher) {
 				s.EXPECT().WorkspaceInfo(gomock.Any(), gomock.Any()).Return(nil)
 				s.EXPECT().SearchMessages(gomock.Any(), gomock.Any(), "test").Return(nil)
 				s.EXPECT().SearchFiles(gomock.Any(), gomock.Any(), "test").Return(assert.AnError)
@@ -466,7 +560,7 @@ func TestController_Search(t *testing.T) {
 				query: "test",
 				stype: SMessages | SFiles,
 			},
-			expectFn: func(s *mock_control.MockStreamer, f *mock_processor.MockFiler, a *mock_processor.MockAvatars, tf *mock_control.MockExportTransformer, erc *mock_control.MockEncodeReferenceCloser) {
+			expectFn: func(s *mock_control.MockStreamer, f *mock_processor.MockFiler, a *mock_processor.MockAvatars, tf *mock_control.MockExportTransformer, erc *mock_control.MockEncodeReferenceFinisher) {
 				s.EXPECT().WorkspaceInfo(gomock.Any(), gomock.Any()).Return(assert.AnError)
 				s.EXPECT().SearchMessages(gomock.Any(), gomock.Any(), "test").Return(nil)
 				s.EXPECT().SearchFiles(gomock.Any(), gomock.Any(), "test").Return(nil)
@@ -482,7 +576,7 @@ func TestController_Search(t *testing.T) {
 				f    = mock_processor.NewMockFiler(ctrl)
 				a    = mock_processor.NewMockAvatars(ctrl)
 				tf   = mock_control.NewMockExportTransformer(ctrl)
-				erc  = mock_control.NewMockEncodeReferenceCloser(ctrl)
+				erc  = mock_control.NewMockEncodeReferenceFinisher(ctrl)
 			)
 			if tt.expectFn != nil {
 				tt.expectFn(s, f, a, tf, erc)

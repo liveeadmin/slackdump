@@ -1,3 +1,18 @@
+// Copyright (c) 2021-2026 Rustam Gilyazov and Contributors.
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU Affero General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU Affero General Public License for more details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 package diag
 
 import (
@@ -11,14 +26,14 @@ import (
 
 	"github.com/rusq/fsadapter"
 
-	"github.com/rusq/slackdump/v3/cmd/slackdump/internal/bootstrap"
-	"github.com/rusq/slackdump/v3/cmd/slackdump/internal/cfg"
-	"github.com/rusq/slackdump/v3/cmd/slackdump/internal/diag/sdv1"
-	"github.com/rusq/slackdump/v3/cmd/slackdump/internal/golang/base"
-	"github.com/rusq/slackdump/v3/internal/chunk"
-	"github.com/rusq/slackdump/v3/internal/chunk/backend/dbase"
-	"github.com/rusq/slackdump/v3/internal/convert"
-	"github.com/rusq/slackdump/v3/source"
+	"github.com/rusq/slackdump/v4/cmd/slackdump/internal/bootstrap"
+	"github.com/rusq/slackdump/v4/cmd/slackdump/internal/cfg"
+	"github.com/rusq/slackdump/v4/cmd/slackdump/internal/diag/sdv1"
+	"github.com/rusq/slackdump/v4/cmd/slackdump/internal/golang/base"
+	"github.com/rusq/slackdump/v4/internal/chunk"
+	"github.com/rusq/slackdump/v4/internal/chunk/backend/dbase"
+	"github.com/rusq/slackdump/v4/internal/convert"
+	"github.com/rusq/slackdump/v4/source"
 )
 
 var cmdConvertV1 = &base.Command{
@@ -60,7 +75,7 @@ func runV1(ctx context.Context, cmd *base.Command, args []string) error {
 		base.SetExitStatus(base.SApplicationError)
 		return fmt.Errorf("failed to create output directory: %w", err)
 	}
-	wconn, si, err := bootstrap.Database(output, "v1")
+	wconn, si, err := bootstrap.DatabaseWithSession(output, "v1")
 	if err != nil {
 		base.SetExitStatus(base.SApplicationError)
 		return fmt.Errorf("failed to open database: %w", err)
@@ -83,9 +98,12 @@ func runV1(ctx context.Context, cmd *base.Command, args []string) error {
 		if err != nil {
 			return fmt.Errorf("failed to create new session: %w", err)
 		}
-		defer erc.Close()
+		defer erc.Abort()
 		if err := convertFile(ctx, erc, filepath.Join(path, p), output, v1Flags.ignoreCopyErrors); err != nil {
 			return fmt.Errorf("failed to convert file %q: %w", p, err)
+		}
+		if err := erc.Finish(); err != nil {
+			return fmt.Errorf("failed to finalize session for file %q: %w", p, err)
 		}
 		return nil
 	}); err != nil {

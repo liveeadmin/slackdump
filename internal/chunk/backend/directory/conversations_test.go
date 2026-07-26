@@ -1,3 +1,18 @@
+// Copyright (c) 2021-2026 Rustam Gilyazov and Contributors.
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU Affero General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU Affero General Public License for more details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 package directory
 
 import (
@@ -9,11 +24,11 @@ import (
 	"github.com/rusq/slack"
 	"go.uber.org/mock/gomock"
 
-	"github.com/rusq/slackdump/v3/internal/chunk"
-	"github.com/rusq/slackdump/v3/internal/chunk/mock_chunk"
-	"github.com/rusq/slackdump/v3/internal/fixtures"
-	"github.com/rusq/slackdump/v3/mocks/mock_processor"
-	"github.com/rusq/slackdump/v3/processor"
+	"github.com/rusq/slackdump/v4/internal/chunk"
+	"github.com/rusq/slackdump/v4/internal/chunk/mock_chunk"
+	"github.com/rusq/slackdump/v4/internal/fixtures"
+	"github.com/rusq/slackdump/v4/mocks/mock_processor"
+	"github.com/rusq/slackdump/v4/processor"
 )
 
 func TestConversations_Messages(t *testing.T) {
@@ -320,6 +335,32 @@ func TestConversations_ThreadMessages(t *testing.T) {
 				mh.EXPECT().Dec().Return(0)
 				mt.EXPECT().RefCount(chunk.ToFileID("channelID", "123", false)).Return(0)
 				mt.EXPECT().Unregister(chunk.ToFileID("channelID", "123", false)).Return(nil)
+			},
+			wantErr: false,
+		},
+		{
+			name: "ok, last parent-only message completes thread",
+			fields: fields{
+				subproc:     nil,
+				recordFiles: false,
+				tf:          nil,
+			},
+			args: args{
+				ctx:        textCtx,
+				channelID:  "channelID",
+				parent:     slack.Message{Msg: slack.Msg{Timestamp: "123", ThreadTimestamp: "123"}},
+				threadOnly: false,
+				isLast:     true,
+				tm:         []slack.Message{{Msg: slack.Msg{Timestamp: "123", ThreadTimestamp: "123"}}},
+			},
+			expectFn: func(mt *Mocktracker, mh *Mockdatahandler) {
+				id := chunk.ToFileID("channelID", "123", false)
+				tm := []slack.Message{{Msg: slack.Msg{Timestamp: "123", ThreadTimestamp: "123"}}}
+				mt.EXPECT().Recorder(id).Return(mh, nil)
+				mh.EXPECT().ThreadMessages(gomock.Any(), "channelID", tm[0], false, true, tm).Return(nil)
+				mh.EXPECT().Dec().Return(0)
+				mt.EXPECT().RefCount(id).Return(0)
+				mt.EXPECT().Unregister(id).Return(nil)
 			},
 			wantErr: false,
 		},

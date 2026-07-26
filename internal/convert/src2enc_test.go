@@ -1,3 +1,18 @@
+// Copyright (c) 2021-2026 Rustam Gilyazov and Contributors.
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU Affero General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU Affero General Public License for more details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 package convert
 
 import (
@@ -5,16 +20,20 @@ import (
 	"iter"
 	"slices"
 	"testing"
+	"testing/fstest"
 	"time"
 
-	"github.com/rusq/slackdump/v3/source/mock_source"
+	"github.com/rusq/fsadapter"
+	"github.com/rusq/slackdump/v4/source/mock_source"
 
 	"github.com/rusq/slack"
 	"go.uber.org/mock/gomock"
 
-	"github.com/rusq/slackdump/v3/internal/fasttime"
-	"github.com/rusq/slackdump/v3/internal/structures"
-	"github.com/rusq/slackdump/v3/mocks/mock_processor"
+	"github.com/rusq/slackdump/v4/internal/fasttime"
+	"github.com/rusq/slackdump/v4/internal/structures"
+	"github.com/rusq/slackdump/v4/mocks/mock_processor"
+	"github.com/rusq/slackdump/v4/processor"
+	"github.com/rusq/slackdump/v4/source"
 )
 
 func Test_encodeMessages(t *testing.T) {
@@ -61,6 +80,41 @@ func Test_encodeMessages(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("skipped file modes do not fail source encoding file copy", func(t *testing.T) {
+		ctrl := gomock.NewController(t)
+		mc := mock_processor.NewMockConversations(ctrl)
+		ms := mock_source.NewMockSourcer(ctrl)
+		st := mock_source.NewMockStorage(ctrl)
+
+		msg := slack.Message{
+			Msg: slack.Msg{
+				Timestamp: "123.456",
+				Text:      "msg",
+				Files: []slack.File{{
+					ID:   "F1",
+					Name: "gone.txt",
+					Mode: "tombstone",
+				}},
+			},
+		}
+		it := func(yield func(slack.Message, error) bool) {
+			yield(msg, nil)
+		}
+
+		ms.EXPECT().AllMessages(gomock.Any(), "C123").Return(it, nil)
+		ms.EXPECT().Files().Return(st).Times(1)
+		st.EXPECT().FS().Return(fstest.MapFS{}).Times(1)
+		mc.EXPECT().Files(gomock.Any(), gomock.Any(), msg, msg.Files).Return(nil)
+		mc.EXPECT().Messages(gomock.Any(), "C123", 0, true, []slack.Message{msg}).Return(nil)
+
+		rec := processor.PrependFiler(mc, &filecopywrapper{
+			fc: NewFileCopier(ms, fsadapter.NewDirectory(t.TempDir()), source.MattermostFilepath, true),
+		})
+		if err := encodeMessages(t.Context(), rec, ms, structures.ChannelFromID("C123")); err != nil {
+			t.Fatalf("encodeMessages() error = %v, want nil", err)
+		}
+	})
 }
 
 func msgGenerator(t *testing.T, startTS int64, num int, chunkSz int) (iter.Seq2[slack.Message, error], [][]slack.Message) {

@@ -1,3 +1,18 @@
+// Copyright (c) 2021-2026 Rustam Gilyazov and Contributors.
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU Affero General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU Affero General Public License for more details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 // Package fileproc is the file processor that can be used in conjunction with
 // the transformer.  It downloads files to the local filesystem using the
 // provided downloader.  Probably it's a good idea to use the
@@ -14,8 +29,8 @@ import (
 	"github.com/rusq/fsadapter"
 	"github.com/rusq/slack"
 
-	"github.com/rusq/slackdump/v3/downloader"
-	"github.com/rusq/slackdump/v3/internal/structures/files"
+	"github.com/rusq/slackdump/v4/downloader"
+	"github.com/rusq/slackdump/v4/internal/structures/files"
 )
 
 // Downloader is the interface that wraps the Download method.
@@ -93,7 +108,9 @@ func ExportTokenUpdateFn(token string) func(_ *slack.Channel, msg *slack.Message
 	}
 }
 
-var invalidModes = map[string]struct{}{
+// skippedModes lists all file modes that are always skipped and not treated as
+// an error.
+var skippedModes = map[string]struct{}{
 	"hidden_by_limit": {},
 	"external":        {},
 	"tombstone":       {},
@@ -101,15 +118,33 @@ var invalidModes = map[string]struct{}{
 
 // IsValid returns true if the file can be downloaded and is valid.
 func IsValid(f *slack.File) bool {
-	return IsValidWithReason(f) == nil
+	return !ShouldSkip(f) && IsValidWithReason(f) == nil
+}
+
+// ShouldSkip returns true for file modes that are expected in message payloads
+// but do not represent downloadable files.
+func ShouldSkip(f *slack.File) bool {
+	_, ok := SkipReason(f)
+	return ok
+}
+
+// SkipReason returns the reason why the file should be skipped.
+func SkipReason(f *slack.File) (string, bool) {
+	if f == nil {
+		return "", false
+	}
+	if _, ok := skippedModes[f.Mode]; ok {
+		return f.Mode, true
+	}
+	return "", false
 }
 
 func IsValidWithReason(f *slack.File) error {
 	if f == nil {
 		return errors.New("file is nil")
 	}
-	if _, ok := invalidModes[f.Mode]; ok {
-		return fmt.Errorf("invalid file mode %q", f.Mode)
+	if ShouldSkip(f) {
+		return nil
 	}
 	if !f.IsExternal && f.Name == "" {
 		return fmt.Errorf("invalid file: external=%v, name=%q", f.IsExternal, f.Name)

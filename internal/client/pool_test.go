@@ -1,3 +1,18 @@
+// Copyright (c) 2021-2026 Rustam Gilyazov and Contributors.
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU Affero General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU Affero General Public License for more details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 package client
 
 import (
@@ -9,7 +24,7 @@ import (
 	"github.com/rusq/slack"
 	"go.uber.org/mock/gomock"
 
-	"github.com/rusq/slackdump/v3/internal/client/mock_client"
+	"github.com/rusq/slackdump/v4/internal/client/mock_client"
 )
 
 func TestPool_next(t *testing.T) {
@@ -87,7 +102,7 @@ func TestPool_AuthTestContext(t *testing.T) {
 		wantErr      bool
 	}{
 		{
-			name: "expect call on the second client (round robin)",
+			name: "expect call on the first client (round robin, two clients)",
 			fields: fields{
 				strategy: newRoundRobin(2),
 			},
@@ -96,8 +111,8 @@ func TestPool_AuthTestContext(t *testing.T) {
 			},
 			numClients: 2,
 			expectFn: func(clients []*mock_client.MockSlack) {
-				clients[0].EXPECT().AuthTestContext(t.Context()).Times(0)
-				clients[1].EXPECT().AuthTestContext(t.Context()).Return(&slack.AuthTestResponse{URL: "abc"}, nil)
+				clients[0].EXPECT().AuthTestContext(t.Context()).Return(&slack.AuthTestResponse{URL: "abc"}, nil)
+				clients[1].EXPECT().AuthTestContext(t.Context()).Times(0)
 			},
 			wantResponse: &slack.AuthTestResponse{URL: "abc"},
 			wantErr:      false,

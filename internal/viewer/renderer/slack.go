@@ -1,3 +1,18 @@
+// Copyright (c) 2021-2026 Rustam Gilyazov and Contributors.
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU Affero General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU Affero General Public License for more details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 package renderer
 
 import (
@@ -8,24 +23,22 @@ import (
 	"html/template"
 	"log"
 	"log/slog"
-	"net/url"
 	"os"
 	"strings"
 
 	"github.com/rusq/slack"
 
-	"github.com/rusq/slackdump/v3/internal/osext"
-	"github.com/rusq/slackdump/v3/internal/viewer/renderer/functions"
+	"github.com/rusq/slackdump/v4/internal/osext"
+	"github.com/rusq/slackdump/v4/internal/viewer/renderer/functions"
 )
 
 const debug = true
 
 type Slack struct {
-	tmpl    *template.Template
-	uu      map[string]slack.User    // map of user id to user
-	cc      map[string]slack.Channel // map of channel id to channel
-	wspHost string                   // workspace URL to replace links to local
-	host    string                   // host to replace links to local
+	tmpl   *template.Template
+	uu     map[string]slack.User    // map of user id to user
+	cc     map[string]slack.Channel // map of channel id to channel
+	routes *Routes
 }
 
 type SlackOption func(*Slack)
@@ -44,16 +57,19 @@ func WithChannels(cc map[string]slack.Channel) SlackOption {
 
 func WithReplaceURL(wspURL, localHost string) SlackOption {
 	return func(sm *Slack) {
-		if localHost == "" {
-			return
+		if sm.routes == nil {
+			sm.routes = NewRoutes(ModeLive)
 		}
-		u, err := url.Parse(wspURL)
-		if err != nil {
-			slog.Warn("error parsing workspace URL", "error", err)
-			return
+		WithWorkspaceURL(wspURL)(sm.routes)
+		WithLiveHost(localHost)(sm.routes)
+	}
+}
+
+func WithRoutes(routes *Routes) SlackOption {
+	return func(sm *Slack) {
+		if routes != nil {
+			sm.routes = routes
 		}
-		sm.wspHost = u.Hostname()
-		sm.host = localHost
 	}
 }
 
@@ -62,8 +78,19 @@ var templates embed.FS
 
 func NewSlack(tmpl *template.Template, opts ...SlackOption) *Slack {
 	s := &Slack{
-		tmpl: template.Must(tmpl.New("blocks").Funcs(functions.FuncMap).ParseFS(templates, "templates/*.html")),
+		routes: NewRoutes(ModeLive),
 	}
+	s.tmpl = template.Must(tmpl.New("blocks").Funcs(functions.FuncMap).Funcs(template.FuncMap{
+		"fileurl": func(id, filename string) string {
+			return s.routes.File(id, filename)
+		},
+		"rewriteurl": func(src string) string {
+			if s.routes == nil {
+				return src
+			}
+			return s.routes.RewriteSlackURL(src)
+		},
+	}).ParseFS(templates, "templates/*.html"))
 	for _, opt := range opts {
 		opt(s)
 	}
@@ -185,12 +212,12 @@ func NewErrMissingHandler(t any) error {
 
 // classes
 var (
-	elBlockquote = element("blockquote", true)
-	elDiv        = element("div", true)
-	elFigure     = element("figure", true)
-	elH3         = element("h3", true)
-	elPre        = element("pre", true)
-	elStrong     = element("strong", true)
+	// elBlockquote = element("blockquote", true)
+	elDiv    = element("div", true)
+	elFigure = element("figure", true)
+	elH3     = element("h3", true)
+	elPre    = element("pre", true)
+	elStrong = element("strong", true)
 )
 
 func element(el string, close bool) func(class string, s string) string {

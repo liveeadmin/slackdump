@@ -1,3 +1,18 @@
+// Copyright (c) 2021-2026 Rustam Gilyazov and Contributors.
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU Affero General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU Affero General Public License for more details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 package emojidl
 
 import (
@@ -19,7 +34,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"go.uber.org/mock/gomock"
 
-	"github.com/rusq/slackdump/v3/internal/edge"
+	"github.com/rusq/slackdump/v4/internal/edge"
 )
 
 type fetchFunc func(ctx context.Context, fsa fsadapter.FS, dir string, name string, uri string) error
@@ -195,11 +210,9 @@ func Test_worker(t *testing.T) {
 			resultC := make(chan result)
 
 			var wg sync.WaitGroup
-			wg.Add(1)
-			go func() {
+			wg.Go(func() {
 				worker(tt.args.ctx, fsa, tt.args.emojiC, resultC)
-				wg.Done()
-			}()
+			})
 			go func() {
 				wg.Wait()
 				close(resultC)
@@ -238,7 +251,7 @@ func Test_fetch(t *testing.T) {
 
 func generateEmojis(n int) (ret map[string]string) {
 	ret = make(map[string]string, n)
-	for i := 0; i < n; i++ {
+	for range n {
 		ret[randString(10)] = "https://emoji.slack.com/" + randString(20)
 	}
 	return

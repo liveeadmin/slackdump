@@ -1,7 +1,23 @@
+// Copyright (c) 2021-2026 Rustam Gilyazov and Contributors.
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU Affero General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU Affero General Public License for more details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 package stream
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"runtime/trace"
@@ -11,9 +27,9 @@ import (
 	"github.com/rusq/slack"
 	"golang.org/x/sync/errgroup"
 
-	"github.com/rusq/slackdump/v3/internal/network"
-	"github.com/rusq/slackdump/v3/internal/structures"
-	"github.com/rusq/slackdump/v3/processor"
+	"github.com/rusq/slackdump/v4/internal/network"
+	"github.com/rusq/slackdump/v4/internal/structures"
+	"github.com/rusq/slackdump/v4/processor"
 )
 
 // SyncConversations fetches the conversations from the link which can be a
@@ -37,7 +53,11 @@ func (cs *Stream) ConversationsCB(ctx context.Context, proc processor.Conversati
 	go func() {
 		defer close(itemC)
 		for _, l := range items {
-			itemC <- l
+			select {
+			case itemC <- l:
+			case <-ctx.Done():
+				return
+			}
 		}
 		lg.DebugContext(ctx, "stream: sent link count", "len", len(items))
 	}()
@@ -69,50 +89,40 @@ func (cs *Stream) Conversations(ctx context.Context, proc processor.Conversation
 	resultsC := make(chan Result, resultSz)
 
 	var wg sync.WaitGroup
-	{
-		// channel worker
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			cs.channelWorker(ctx, proc, resultsC, threadsC, chansC)
-			// we close threads here, instead of the main loop, because we want to
-			// close it after all the threads are sent by channels.
-			close(threadsC)
-			trace.Log(ctx, "async", "channel worker done")
-		}()
-	}
-	{
-		// thread worker
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			cs.threadWorker(ctx, proc, resultsC, threadsC)
-			trace.Log(ctx, "async", "thread worker done")
-		}()
-	}
-	{
-		// main loop
-		wg.Add(1)
-		go func() {
-			defer trace.Log(ctx, "async", "main loop done")
-			defer wg.Done()
-			defer close(chansC)
-			for {
-				select {
-				case <-ctx.Done():
-					resultsC <- Result{Type: RTMain, Err: context.Cause(ctx)}
+
+	// channel worker
+	wg.Go(func() {
+		cs.channelWorker(ctx, proc, resultsC, threadsC, chansC)
+		// we close threads here, instead of the main loop, because we want to
+		// close it after all the threads are sent by channels.
+		close(threadsC)
+		trace.Log(ctx, "async", "channel worker done")
+	})
+	// thread worker
+	wg.Go(func() {
+		cs.threadWorker(ctx, proc, resultsC, threadsC)
+		trace.Log(ctx, "async", "thread worker done")
+	})
+	// main loop
+	wg.Go(func() {
+		defer trace.Log(ctx, "async", "main loop done")
+		defer close(chansC)
+		for {
+			select {
+			case <-ctx.Done():
+				resultsC <- Result{Type: RTMain, Err: context.Cause(ctx)}
+				return
+			case item, more := <-items:
+				if !more {
 					return
-				case item, more := <-items:
-					if !more {
-						return
-					}
-					if err := processLink(chansC, threadsC, item); err != nil {
-						resultsC <- Result{Type: RTMain, Err: fmt.Errorf("item error: %q: %w", item.String(), err)}
-					}
+				}
+				if err := processLink(chansC, threadsC, item); err != nil {
+					resultsC <- Result{Type: RTMain, Err: fmt.Errorf("item error: %q: %w", item.String(), err)}
 				}
 			}
-		}()
-	}
+		}
+	})
+
 	go func() {
 		// sentinel waits for all the workers to finish, then closes the error
 		// channel.
@@ -124,6 +134,11 @@ func (cs *Stream) Conversations(ctx context.Context, proc processor.Conversation
 	// result processing.
 	for res := range resultsC {
 		if err := res.Err; err != nil {
+			trace.Logf(ctx, "error", "type: %s, chan_id: %s, thread_ts: %s, error: %s", res.Type, res.ChannelID, res.ThreadTS, err.Error())
+			if (errors.Is(err, errChanNotFound) || errors.Is(err, errNotInChannel)) && !cs.failChnlNotFnd {
+				slog.WarnContext(ctx, "channel not found or user not in channel, skipping", "channel_id", res.ChannelID)
+				continue
+			}
 			trace.Logf(ctx, "error", "type: %s, chan_id: %s, thread_ts: %s, error: %s", res.Type, res.ChannelID, res.ThreadTS, err.Error())
 			return &res // res implements Error
 		}
@@ -159,6 +174,7 @@ type request struct {
 	// threadOnly indicates that this is the thread directly requested by the
 	// user, and not a thread that was found in the channel.
 	threadOnly bool
+	parent     *slack.Message
 	Oldest     time.Time
 	Latest     time.Time
 }
@@ -213,6 +229,8 @@ func (cs *Stream) channel(ctx context.Context, req request, callback func(mm []s
 // thread fetches the whole thread identified by SlackLink, calling callback
 // function fn for each slice received. the callback function will be called if
 // there's no messages in the thread, and should handle as it sees fit.
+// It will treat thread_not_found as non critical error, call the callback with
+// a parent-only final message slice, and will not raise an error.
 func (cs *Stream) thread(ctx context.Context, req request, callback func(mm []slack.Message, isLast bool) error) error {
 	ctx, task := trace.NewTask(ctx, "thread")
 	defer task.End()
@@ -221,9 +239,12 @@ func (cs *Stream) thread(ctx context.Context, req request, callback func(mm []sl
 		return fmt.Errorf("not a thread: %s", req.sl)
 	}
 
-	slog.DebugContext(ctx, "- getting thread", "slack_link", req.sl)
+	lg := slog.With("slack_link", req.sl)
+
+	lg.DebugContext(ctx, "- getting thread")
 
 	var cursor string
+	firstPage := true
 	for {
 		var (
 			msgs    []slack.Message
@@ -241,15 +262,34 @@ func (cs *Stream) thread(ctx context.Context, req request, callback func(mm []sl
 				Inclusive: cs.inclusive,
 			})
 			if apiErr == nil && len(msgs) == 0 {
-				slog.DebugContext(ctx, "  - no messages returned by the API, requesting a retry", "slack_link", req.sl)
+				lg.DebugContext(ctx, "  - no messages returned by the API, requesting a retry")
 				// no messages returned by the API, but no error either, let's ask
 				// nicely to retry, maybe Slack is having a bad day.
 				return network.ErrRetryPlease
 			}
+			if ke, ok := isNonCriticalErr(apiErr); ok {
+				// Non-critical API errors should not be retried.
+				return ke
+			}
 			return apiErr
 		}); err != nil {
+			if errors.Is(err, errThreadNotFound) {
+				// isNonCriticalErr mapped the API error to this sentinel;
+				// deliver a parent-only final chunk.
+				lg.Warn("skipping non-existing thread")
+				return callback(parentOnlyThreadMessages(req), true)
+			}
 			return err
 		}
+
+		if firstPage && req.threadOnly && cs.skipThread != nil {
+			replyCount := msgs[0].ReplyCount
+			if cs.skipThread(ctx, req.sl.Channel, req.sl.ThreadTS, replyCount) {
+				lg.DebugContext(ctx, "skipping complete thread", "channel_id", req.sl.Channel, "thread_ts", req.sl.ThreadTS, "reply_count", replyCount)
+				return nil
+			}
+		}
+		firstPage = false
 
 		r := trace.StartRegion(ctx, "thread_callback")
 		err := callback(msgs, !hasmore)
@@ -265,10 +305,28 @@ func (cs *Stream) thread(ctx context.Context, req request, callback func(mm []sl
 	return nil
 }
 
+func parentOnlyThreadMessages(req request) []slack.Message {
+	if req.parent != nil {
+		return []slack.Message{*req.parent}
+	}
+	// Direct thread links have no channel message parent in hand. Keep the
+	// synthetic parent minimal so downstream processors can close the thread
+	// chunk without inventing user, subtype, or text fields.
+	return []slack.Message{
+		{
+			Msg: slack.Msg{
+				Channel:         req.sl.Channel,
+				Timestamp:       req.sl.ThreadTS,
+				ThreadTimestamp: req.sl.ThreadTS,
+			},
+		},
+	}
+}
+
 // procChanMsg processes the message slice mm, for each threaded message, it
 // sends the thread request on threadC.  It returns thread count in the mm and
 // error if any.
-func procChanMsg(ctx context.Context, proc processor.Conversations, threadC chan<- request, channel *slack.Channel, isLast bool, mm []slack.Message) (int, error) {
+func (cs *Stream) procChanMsg(ctx context.Context, proc processor.Conversations, threadC chan<- request, channel *slack.Channel, isLast bool, mm []slack.Message) (int, error) {
 	trs := make([]request, 0, len(mm))
 	for i := range mm {
 		// collecting threads to get their count.  But we don't start
@@ -277,12 +335,18 @@ func procChanMsg(ctx context.Context, proc processor.Conversations, threadC chan
 		// start processing the channel and will have the initial reference
 		// count, if it needs it.
 		if mm[i].ThreadTimestamp != "" && mm[i].SubType != structures.SubTypeThreadBroadcast && mm[i].LatestReply != structures.LatestReplyNoReplies {
+			if cs.skipThread != nil && cs.skipThread(ctx, channel.ID, mm[i].ThreadTimestamp, mm[i].ReplyCount) {
+				slog.DebugContext(ctx, "skipping complete thread", "channel_id", channel.ID, "thread_ts", mm[i].ThreadTimestamp, "reply_count", mm[i].ReplyCount)
+				continue
+			}
 			slog.DebugContext(ctx, "- message", "i", i, "thread", mm[i].Timestamp, "thread_ts", mm[i].ThreadTimestamp, "channel_id", channel.ID, "is_last", isLast, "msg_count", len(mm))
+			parent := mm[i]
 			trs = append(trs, request{
 				sl: &structures.SlackLink{
 					Channel:  channel.ID,
 					ThreadTS: mm[i].ThreadTimestamp,
 				},
+				parent: &parent,
 			})
 		}
 		if err := procFiles(ctx, proc, channel, mm[i]); err != nil {
@@ -356,6 +420,9 @@ func (cs *Stream) procChannelInfo(ctx context.Context, proc processor.ChannelInf
 				IncludeNumMembers: true,
 			})
 			if err != nil {
+				if ke, ok := isNonCriticalErr(err); ok {
+					return ke
+				}
 				return fmt.Errorf("error getting channel information: %w", err)
 			}
 			return nil
@@ -371,7 +438,32 @@ func (cs *Stream) procChannelInfo(ctx context.Context, proc processor.ChannelInf
 	return info, nil
 }
 
+// non-critical errors
+var (
+	errChanNotFound   = errors.New("channel_not_found")
+	errThreadNotFound = errors.New("thread_not_found")
+	errNotInChannel   = errors.New("not_in_channel")
+)
+
+func isNonCriticalErr(e error) (error, bool) {
+	for _, known := range []error{
+		errChanNotFound,
+		errThreadNotFound,
+		errNotInChannel,
+	} {
+		if structures.IsSlackResponseError(e, known.Error()) {
+			return known, true
+		}
+	}
+	return nil, false
+}
+
 func (cs *Stream) procChannelUsers(ctx context.Context, proc processor.ChannelInformer, channelID, threadTS string) ([]string, error) {
+	// Check if users are already cached for this channel.
+	if users := cs.userCache.get(channelID); users != nil {
+		return users, nil
+	}
+
 	var users []string
 
 	var cursor string
@@ -386,19 +478,27 @@ func (cs *Stream) procChannelUsers(ctx context.Context, proc processor.ChannelIn
 			})
 			return err
 		}); err != nil {
+			if ke, ok := isNonCriticalErr(err); ok {
+				return nil, ke
+			}
 			return nil, fmt.Errorf("error getting conversation users: %w", err)
 		}
 		if len(u) == 0 && next == "" {
 			break
-		}
-		if err := proc.ChannelUsers(ctx, channelID, threadTS, u); err != nil {
-			return nil, err
 		}
 		users = append(users, u...)
 		if next == "" {
 			break
 		}
 		cursor = next
+	}
+
+	// Cache the users for this channel.
+	cs.userCache.set(channelID, users)
+
+	// Notify the processor.
+	if err := proc.ChannelUsers(ctx, channelID, threadTS, users); err != nil {
+		return nil, err
 	}
 
 	return users, nil

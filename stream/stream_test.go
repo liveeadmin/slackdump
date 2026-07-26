@@ -1,7 +1,23 @@
+// Copyright (c) 2021-2026 Rustam Gilyazov and Contributors.
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU Affero General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU Affero General Public License for more details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 package stream
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -11,20 +27,24 @@ import (
 	"testing"
 	"time"
 
-	"github.com/rusq/chttp"
+	"github.com/rusq/chttp/v2"
 	"github.com/rusq/slack"
 	"github.com/stretchr/testify/assert"
 	"go.uber.org/mock/gomock"
 
-	"github.com/rusq/slackdump/v3/auth"
-	"github.com/rusq/slackdump/v3/internal/cache"
-	"github.com/rusq/slackdump/v3/internal/chunk"
-	"github.com/rusq/slackdump/v3/internal/chunk/chunktest"
-	"github.com/rusq/slackdump/v3/internal/client/mock_client"
-	"github.com/rusq/slackdump/v3/internal/fixtures"
-	"github.com/rusq/slackdump/v3/internal/network"
-	"github.com/rusq/slackdump/v3/internal/structures"
-	"github.com/rusq/slackdump/v3/mocks/mock_processor"
+	utls "github.com/refraction-networking/utls"
+
+	"github.com/rusq/slackdump/v4/auth"
+	"github.com/rusq/slackdump/v4/internal/cache"
+	"github.com/rusq/slackdump/v4/internal/chunk"
+	"github.com/rusq/slackdump/v4/internal/chunk/chunktest"
+	"github.com/rusq/slackdump/v4/internal/client"
+	"github.com/rusq/slackdump/v4/internal/client/mock_client"
+	"github.com/rusq/slackdump/v4/internal/fixtures"
+	"github.com/rusq/slackdump/v4/internal/network"
+	"github.com/rusq/slackdump/v4/internal/structures"
+	"github.com/rusq/slackdump/v4/mocks/mock_processor"
+	"github.com/rusq/slackdump/v4/processor"
 )
 
 const testConversation = "CO720D65C25A"
@@ -48,7 +68,9 @@ func TestChannelStream(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	sd := slack.New(prov.SlackToken(), slack.OptionHTTPClient(chttp.Must(chttp.New(auth.SlackURL, prov.Cookies()))))
+	cl := chttp.Must(chttp.New(auth.SlackURL, prov.Cookies(), chttp.WithUTLS(&utls.Config{})))
+	defer chttp.Close(cl)
+	sd := slack.New(prov.SlackToken(), slack.OptionHTTPClient(cl))
 
 	f, err := os.Create("record.jsonl")
 	if err != nil {
@@ -105,7 +127,7 @@ func TestReplay(t *testing.T) {
 	sd := slack.New("test", slack.OptionAPIURL(srv.URL()))
 
 	reachedEnd := false
-	for i := 0; i < 100_000; i++ {
+	for i := range 100_000 {
 		resp, err := sd.GetConversationHistory(&slack.GetConversationHistoryParameters{ChannelID: fixtures.ChunkFileChannelID})
 		if err != nil {
 			t.Fatalf("error on iteration %d: %s", i, err)
@@ -121,62 +143,144 @@ func TestReplay(t *testing.T) {
 	}
 }
 
-var testThread = []slack.Message{
-	{
-		Msg: slack.Msg{
-			Channel:         "CTM1",
-			Timestamp:       "1610000000.000000",
-			ThreadTimestamp: "1610000000.000000",
-			Files: []slack.File{
-				{ID: "FILE_1", Name: "file1"},
-				{ID: "FILE_2", Name: "file2"},
-			},
-		},
-	},
-	{
-		Msg: slack.Msg{
-			Channel:         "CTM1",
-			Timestamp:       "1610000000.000001",
-			ThreadTimestamp: "1610000000.000000",
-			Files: []slack.File{
-				{ID: "FILE_3", Name: "file1"},
-				{ID: "FILE_4", Name: "file2"},
-			},
-		},
-	},
-	{
-		Msg: slack.Msg{
-			Channel:         "CTM1",
-			Timestamp:       "1610000000.000002",
-			ThreadTimestamp: "1610000000.000000",
-			Files: []slack.File{
-				{ID: "FILE_5", Name: "file5"},
-				{ID: "FILE_6", Name: "file6"},
-			},
-		},
-	},
-}
+func TestStream_thread(t *testing.T) {
+	parent := slack.Message{Msg: slack.Msg{
+		Channel:         "CTM1",
+		Timestamp:       "1610000000.000000",
+		ThreadTimestamp: "1610000000.000000",
+		Text:            "thread parent",
+	}}
 
-func Test_processThreadMessages(t *testing.T) {
-	t.Run("all files from messages are collected", func(t *testing.T) {
+	tests := []struct {
+		name string
+		req  request
+		want []slack.Message
+	}{
+		{
+			name: "uses discovered parent",
+			req: request{
+				sl:     &structures.SlackLink{Channel: "CTM1", ThreadTS: "1610000000.000000"},
+				parent: &parent,
+			},
+			want: []slack.Message{parent},
+		},
+		{
+			name: "synthesizes parent for direct thread link",
+			req: request{
+				sl:         &structures.SlackLink{Channel: "CTM1", ThreadTS: "1610000000.000000"},
+				threadOnly: true,
+			},
+			want: []slack.Message{
+				{Msg: slack.Msg{
+					Channel:         "CTM1",
+					Timestamp:       "1610000000.000000",
+					ThreadTimestamp: "1610000000.000000",
+				}},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			ms := mock_client.NewMockSlack(ctrl)
+			cs := New(ms, network.NoLimits)
+			ms.EXPECT().
+				GetConversationRepliesContext(gomock.Any(), gomock.Any()).
+				Return(nil, false, "", slack.SlackErrorResponse{Err: "thread_not_found"}).
+				Times(1)
+
+			var calls int
+			err := cs.thread(t.Context(), tt.req, func(mm []slack.Message, isLast bool) error {
+				calls++
+				assert.True(t, isLast)
+				assert.Equal(t, tt.want, mm)
+				return nil
+			})
+			if err != nil {
+				t.Fatalf("thread() error = %v", err)
+			}
+			assert.Equal(t, 1, calls)
+		})
+	}
+
+	t.Run("skips complete direct thread after first page", func(t *testing.T) {
 		ctrl := gomock.NewController(t)
-
-		mproc := mock_processor.NewMockConversations(ctrl)
-		dummyChannel := fixtures.DummyChannel("CTM1")
-		mproc.EXPECT().
-			ThreadMessages(gomock.Any(), "CTM1", testThread[0], false, true, testThread).
-			Return(nil)
-
-		mproc.EXPECT().
-			Files(gomock.Any(), dummyChannel, testThread[1], testThread[1].Files).
-			Return(nil)
-		mproc.EXPECT().
-			Files(gomock.Any(), dummyChannel, testThread[2], testThread[2].Files).
-			Return(nil)
-
-		if err := procThreadMsg(t.Context(), mproc, dummyChannel, testThread[0].ThreadTimestamp, false, true, testThread); err != nil {
-			t.Fatal(err)
+		ms := mock_client.NewMockSlack(ctrl)
+		cs := New(ms, network.NoLimits, OptSkipThreadFunc(func(ctx context.Context, channelID, threadTS string, replyCount int) bool {
+			assert.Equal(t, "CTM1", channelID)
+			assert.Equal(t, "1610000000.000000", threadTS)
+			assert.Equal(t, 2, replyCount)
+			return true
+		}))
+		msgs := []slack.Message{
+			{Msg: slack.Msg{
+				Channel:         "CTM1",
+				Timestamp:       "1610000000.000000",
+				ThreadTimestamp: "1610000000.000000",
+				ReplyCount:      2,
+			}},
 		}
+		ms.EXPECT().
+			GetConversationRepliesContext(gomock.Any(), gomock.Any()).
+			Return(msgs, true, "next-cursor", nil).
+			Times(1)
+
+		var calls int
+		err := cs.thread(t.Context(), request{
+			sl:         &structures.SlackLink{Channel: "CTM1", ThreadTS: "1610000000.000000"},
+			threadOnly: true,
+		}, func(mm []slack.Message, isLast bool) error {
+			calls++
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("thread() error = %v", err)
+		}
+		assert.Equal(t, 0, calls)
+	})
+
+	t.Run("processes incomplete direct thread after first page", func(t *testing.T) {
+		ctrl := gomock.NewController(t)
+		ms := mock_client.NewMockSlack(ctrl)
+		cs := New(ms, network.NoLimits, OptSkipThreadFunc(func(ctx context.Context, channelID, threadTS string, replyCount int) bool {
+			assert.Equal(t, "CTM1", channelID)
+			assert.Equal(t, "1610000000.000000", threadTS)
+			assert.Equal(t, 3, replyCount)
+			return false
+		}))
+		msgs := []slack.Message{
+			{Msg: slack.Msg{
+				Channel:         "CTM1",
+				Timestamp:       "1610000000.000000",
+				ThreadTimestamp: "1610000000.000000",
+				ReplyCount:      3,
+			}},
+			{Msg: slack.Msg{
+				Channel:         "CTM1",
+				Timestamp:       "1610000001.000000",
+				ThreadTimestamp: "1610000000.000000",
+			}},
+		}
+		ms.EXPECT().
+			GetConversationRepliesContext(gomock.Any(), gomock.Any()).
+			Return(msgs, false, "", nil).
+			Times(1)
+
+		var calls int
+		err := cs.thread(t.Context(), request{
+			sl:         &structures.SlackLink{Channel: "CTM1", ThreadTS: "1610000000.000000"},
+			threadOnly: true,
+		}, func(mm []slack.Message, isLast bool) error {
+			calls++
+			assert.True(t, isLast)
+			assert.Equal(t, msgs, mm)
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("thread() error = %v", err)
+		}
+		assert.Equal(t, 1, calls)
 	})
 }
 
@@ -509,4 +613,202 @@ func TestStream_UsersBulk(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestStream_UsersBulkWithCustom(t *testing.T) {
+	cancelled, cancel := context.WithCancel(t.Context())
+	cancel()
+	testLimits := rateLimits{
+		userinfo: network.NewLimiter(network.NoTier, 100, 100),
+		tier:     network.DefLimits,
+	}
+	var (
+		basicUser   = slack.User{ID: "U12345678", Profile: slack.UserProfile{FirstName: "Basic data"}}
+		userProfile = slack.UserProfile{FirstName: "Full Data"}
+	)
+	type fields struct {
+		oldest         time.Time
+		latest         time.Time
+		client         client.Slack
+		limits         rateLimits
+		chanCache      *chanCache
+		fastSearch     bool
+		inclusive      bool
+		failChnlNotFnd bool
+		resultFn       []func(sr Result) error
+	}
+	type args struct {
+		ctx           context.Context
+		proc          processor.Users
+		includeLabels bool
+		ids           []string
+	}
+	tests := []struct {
+		name     string
+		fields   fields
+		args     args
+		expectFn func(ms *mock_client.MockSlack, mu *mock_processor.MockUsers)
+		wantErr  bool
+	}{
+		{
+			name:   "cancelled context",
+			fields: fields{limits: testLimits},
+			args: args{
+				ctx: cancelled,
+				ids: []string{"U12345678"},
+			},
+			expectFn: func(ms *mock_client.MockSlack, mu *mock_processor.MockUsers) {
+				mu.EXPECT().Users(gomock.Any(), gomock.Any()).Times(0)
+			},
+			wantErr: true,
+		},
+		{
+			name:   "user fetch ok, profile fetch ok - profile updated",
+			fields: fields{limits: testLimits},
+			args: args{
+				ctx: context.Background(),
+				ids: []string{"U12345678"},
+			},
+			expectFn: func(ms *mock_client.MockSlack, mu *mock_processor.MockUsers) {
+				ms.EXPECT().GetUserInfoContext(gomock.Any(), "U12345678").Return(&basicUser, nil)
+				ms.EXPECT().GetUserProfileContext(gomock.Any(), &slack.GetUserProfileParameters{
+					UserID:        "U12345678",
+					IncludeLabels: false,
+				}).Return(&userProfile, nil)
+
+				wantUser := basicUser
+				wantUser.Profile = userProfile // updated profile
+
+				mu.EXPECT().Users(gomock.Any(), []slack.User{wantUser}).Return(nil)
+			},
+			wantErr: false,
+		},
+		{
+			name:   "propagates includeLabels",
+			fields: fields{limits: testLimits},
+			args: args{
+				ctx:           context.Background(),
+				ids:           []string{"U12345678"},
+				includeLabels: true,
+			},
+			expectFn: func(ms *mock_client.MockSlack, mu *mock_processor.MockUsers) {
+				ms.EXPECT().GetUserInfoContext(gomock.Any(), "U12345678").Return(&basicUser, nil)
+				ms.EXPECT().GetUserProfileContext(gomock.Any(), &slack.GetUserProfileParameters{
+					UserID:        "U12345678",
+					IncludeLabels: true,
+				}).Return(&userProfile, nil)
+
+				wantUser := basicUser
+				wantUser.Profile = userProfile // updated profile
+
+				mu.EXPECT().Users(gomock.Any(), []slack.User{wantUser}).Return(nil)
+			},
+			wantErr: false,
+		},
+		{
+			name:   "user fetch ok, profile fetch not ok - retains basic profile",
+			fields: fields{limits: testLimits},
+			args: args{
+				ctx: context.Background(),
+				ids: []string{"U12345678"},
+			},
+			expectFn: func(ms *mock_client.MockSlack, mu *mock_processor.MockUsers) {
+				ms.EXPECT().GetUserInfoContext(gomock.Any(), "U12345678").Return(&basicUser, nil)
+				ms.EXPECT().GetUserProfileContext(gomock.Any(), &slack.GetUserProfileParameters{
+					UserID:        "U12345678",
+					IncludeLabels: false,
+				}).Return(nil, errors.New("profile fetch error, no profile update expected"))
+
+				wantUser := basicUser
+
+				mu.EXPECT().Users(gomock.Any(), []slack.User{wantUser}).Return(nil)
+			},
+			wantErr: false,
+		},
+		{
+			name:   "user fetch not ok - error",
+			fields: fields{limits: testLimits},
+			args: args{
+				ctx: context.Background(),
+				ids: []string{"U12345678"},
+			},
+			expectFn: func(ms *mock_client.MockSlack, mu *mock_processor.MockUsers) {
+				ms.EXPECT().GetUserInfoContext(gomock.Any(), "U12345678").Return(nil, errors.New("not your day"))
+				ms.EXPECT().GetUserProfileContext(gomock.Any(), &slack.GetUserProfileParameters{
+					UserID:        "U12345678",
+					IncludeLabels: false,
+				}).Return(&userProfile, nil)
+
+				mu.EXPECT().Users(gomock.Any(), gomock.Any()).Times(0)
+			},
+			wantErr: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			ms := mock_client.NewMockSlack(ctrl)
+			mu := mock_processor.NewMockUsers(ctrl)
+			if tt.expectFn != nil {
+				tt.expectFn(ms, mu)
+			}
+			cs := &Stream{
+				oldest:         tt.fields.oldest,
+				latest:         tt.fields.latest,
+				client:         ms,
+				limits:         tt.fields.limits,
+				chanCache:      tt.fields.chanCache,
+				fastSearch:     tt.fields.fastSearch,
+				inclusive:      tt.fields.inclusive,
+				failChnlNotFnd: tt.fields.failChnlNotFnd,
+				resultFn:       tt.fields.resultFn,
+			}
+			if err := cs.UsersBulkWithCustom(tt.args.ctx, mu, tt.args.includeLabels, tt.args.ids...); (err != nil) != tt.wantErr {
+				t.Errorf("Stream.UsersBulkWithCustom() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestStream_UsersBulkWithCustomErr(t *testing.T) {
+	testLimits := rateLimits{
+		userinfo: network.NewLimiter(network.NoTier, 100, 100),
+		tier:     network.DefLimits,
+	}
+
+	t.Run("nil handler fails on user lookup error", func(t *testing.T) {
+		ctrl := gomock.NewController(t)
+		ms := mock_client.NewMockSlack(ctrl)
+		mu := mock_processor.NewMockUsers(ctrl)
+		lookupErr := errors.New("not your day")
+
+		ms.EXPECT().GetUserInfoContext(gomock.Any(), "U1").Return(nil, lookupErr)
+		ms.EXPECT().GetUserProfileContext(gomock.Any(), gomock.Any()).Return(nil, nil)
+		mu.EXPECT().Users(gomock.Any(), gomock.Any()).Times(0)
+
+		cs := &Stream{client: ms, limits: testLimits}
+		err := cs.UsersBulkWithCustomErr(t.Context(), mu, false, []string{"U1"}, nil)
+		assert.ErrorIs(t, err, lookupErr)
+	})
+
+	t.Run("handler skips error and preserves batch", func(t *testing.T) {
+		ctrl := gomock.NewController(t)
+		ms := mock_client.NewMockSlack(ctrl)
+		mu := mock_processor.NewMockUsers(ctrl)
+		u1 := slack.User{ID: "U1"}
+		u2 := slack.User{ID: "U2"}
+		notFound := slack.SlackErrorResponse{Err: "user_not_found"}
+
+		ms.EXPECT().GetUserInfoContext(gomock.Any(), "U1").Return(&u1, nil)
+		ms.EXPECT().GetUserInfoContext(gomock.Any(), "U00").Return(nil, notFound)
+		ms.EXPECT().GetUserInfoContext(gomock.Any(), "U2").Return(&u2, nil)
+		ms.EXPECT().GetUserProfileContext(gomock.Any(), gomock.Any()).Return(nil, nil).Times(3)
+		mu.EXPECT().Users(gomock.Any(), []slack.User{u1, u2}).Return(nil)
+
+		cs := &Stream{client: ms, limits: testLimits}
+		err := cs.UsersBulkWithCustomErr(t.Context(), mu, false, []string{"U1", "U00", "U2"}, func(err error) bool {
+			return !structures.IsSlackResponseError(err, "user_not_found")
+		})
+		assert.NoError(t, err)
+	})
 }

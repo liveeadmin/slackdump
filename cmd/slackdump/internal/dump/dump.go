@@ -1,3 +1,18 @@
+// Copyright (c) 2021-2026 Rustam Gilyazov and Contributors.
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU Affero General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU Affero General Public License for more details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 package dump
 
 import (
@@ -15,19 +30,19 @@ import (
 
 	"github.com/rusq/fsadapter"
 
-	"github.com/rusq/slackdump/v3/cmd/slackdump/internal/bootstrap"
-	"github.com/rusq/slackdump/v3/cmd/slackdump/internal/cfg"
-	"github.com/rusq/slackdump/v3/cmd/slackdump/internal/golang/base"
-	"github.com/rusq/slackdump/v3/internal/chunk"
-	"github.com/rusq/slackdump/v3/internal/chunk/backend/dbase"
-	"github.com/rusq/slackdump/v3/internal/chunk/control"
-	"github.com/rusq/slackdump/v3/internal/client"
-	"github.com/rusq/slackdump/v3/internal/convert/transform"
-	"github.com/rusq/slackdump/v3/internal/convert/transform/fileproc"
-	"github.com/rusq/slackdump/v3/internal/nametmpl"
-	"github.com/rusq/slackdump/v3/internal/structures"
-	"github.com/rusq/slackdump/v3/source"
-	"github.com/rusq/slackdump/v3/stream"
+	"github.com/rusq/slackdump/v4/cmd/slackdump/internal/bootstrap"
+	"github.com/rusq/slackdump/v4/cmd/slackdump/internal/cfg"
+	"github.com/rusq/slackdump/v4/cmd/slackdump/internal/golang/base"
+	"github.com/rusq/slackdump/v4/internal/chunk"
+	"github.com/rusq/slackdump/v4/internal/chunk/backend/dbase"
+	"github.com/rusq/slackdump/v4/internal/chunk/control"
+	"github.com/rusq/slackdump/v4/internal/client"
+	"github.com/rusq/slackdump/v4/internal/convert/transform"
+	"github.com/rusq/slackdump/v4/internal/convert/transform/fileproc"
+	"github.com/rusq/slackdump/v4/internal/nametmpl"
+	"github.com/rusq/slackdump/v4/internal/structures"
+	"github.com/rusq/slackdump/v4/source"
+	"github.com/rusq/slackdump/v4/stream"
 )
 
 //go:embed assets/list_conversation.md
@@ -40,7 +55,11 @@ var CmdDump = &base.Command{
 	Long:        dumpMd,
 	RequireAuth: true,
 	PrintFlags:  true,
-	FlagMask:    cfg.OmitCustomUserFlags | cfg.OmitRecordFilesFlag | cfg.OmitWithAvatarsFlag,
+	FlagMask: (cfg.OmitCustomUserFlags |
+		cfg.OmitMemberOnlyFlag |
+		cfg.OmitRecordFilesFlag |
+		cfg.OmitWithAvatarsFlag |
+		cfg.OmitChannelTypesFlag), // we don't need channel types, as dump requires explicit channel ids
 }
 
 func init() {
@@ -218,6 +237,7 @@ func dumpv3(ctx context.Context, sess client.Slack, fsa fsadapter.FS, p dumppara
 	s := stream.New(sess, cfg.Limits,
 		stream.OptOldest(time.Time(cfg.Oldest)),
 		stream.OptLatest(time.Time(cfg.Latest)),
+		stream.OptFailOnNonCritError(cfg.FailOnNonCritical),
 		stream.OptResultFn(func(sr stream.Result) error {
 			if sr.Err != nil {
 				return sr.Err
@@ -274,7 +294,7 @@ func dumpv31(ctx context.Context, client client.Slack, fsa fsadapter.FS, p dumpp
 	}
 
 	// creating a temporary database to hold the data for the converter.
-	wconn, si, err := bootstrap.Database(tmpdir, "dump")
+	wconn, si, err := bootstrap.DatabaseWithSession(tmpdir, "dump")
 	if err != nil {
 		return err
 	}
@@ -284,7 +304,7 @@ func dumpv31(ctx context.Context, client client.Slack, fsa fsadapter.FS, p dumpp
 		return err
 	}
 	defer func() {
-		if err := tmpdbp.Close(); err != nil {
+		if err := tmpdbp.Abort(); err != nil {
 			lg.ErrorContext(ctx, "unable to close database processor", "error", err)
 		}
 	}()
@@ -313,6 +333,7 @@ func dumpv31(ctx context.Context, client client.Slack, fsa fsadapter.FS, p dumpp
 	stream := stream.New(client, cfg.Limits,
 		stream.OptOldest(time.Time(cfg.Oldest)),
 		stream.OptLatest(time.Time(cfg.Latest)),
+		stream.OptFailOnNonCritError(cfg.FailOnNonCritical),
 		stream.OptResultFn(func(sr stream.Result) error {
 			if sr.Err != nil {
 				return sr.Err
@@ -343,6 +364,9 @@ func dumpv31(ctx context.Context, client client.Slack, fsa fsadapter.FS, p dumpp
 	}
 	if err := coord.Wait(); err != nil {
 		return fmt.Errorf("error waiting for coordinator: %w", err)
+	}
+	if err := ctrl.Finish(); err != nil {
+		return fmt.Errorf("error finalizing db controller: %w", err)
 	}
 	return nil
 }
