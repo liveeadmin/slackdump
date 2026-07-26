@@ -18,7 +18,7 @@ This repository contains the **VibeLogic "v." framework**, a plan-driven methodo
 
 ## Available Commands
 
-This project provides 29 custom commands via `.claude/commands/`. When suggesting code or workflows, reference these commands as they define the framework's capabilities.
+This project provides 30 custom commands via `.claude/commands/`. When suggesting code or workflows, reference these commands as they define the framework's capabilities.
 
 ### Project Initialization
 
@@ -67,6 +67,9 @@ This project provides 29 custom commands via `.claude/commands/`. When suggestin
 
 - **@.claude/commands/v.doall.md**  
   Execute all tasks automatically without stopping. Autonomous problem-solving with TDD, memory updates, and auto-commits. Fast vibe coding mode.
+
+- **@.claude/commands/v.debug.md**  
+  Structured bug investigation and resolution with planned debugging tasks. For non-trivial bugs requiring systematic investigation.
 
 ### Quality Assurance
 

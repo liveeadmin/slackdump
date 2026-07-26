@@ -1,5 +1,5 @@
 # Vibe-Coding Framework — CLAUDE.md
-**Version**: 2.6.0 | **Last Updated**: 2025-11-05
+**Version**: 2.7.0 | **Last Updated**: 2025-11-05
 **Owner**: VibeLogic.app — Confidential / Proprietary
 
 Purpose: unified operating manual for AI coding agents working in this repo.
@@ -610,6 +610,21 @@ v.specify "Build X with Y tech" → v.doall
 ```
 **Purpose**: Minimal setup, immediate execution  
 **Note**: `v.doall` will auto-generate plan and tasks if missing
+
+### Bug Investigation (Structured Debugging)
+```
+v.debug new "Bug description" → document → investigate → resolve
+```
+**Purpose**: Systematic investigation of complex bugs  
+**When to use**: Non-trivial bugs (>30 min), intermittent issues, regressions  
+**Benefits**: Reproducible process, hypothesis testing, knowledge retention
+
+### Bug Investigation (Quick Fix)
+```
+v.debug new "Issue" → v.next → v.do → v.debug resolve
+```
+**Purpose**: Structured but rapid bug resolution  
+**Integration**: Works with v.next/v.do workflow
 
 ## Error Recovery Protocol
 - **Step fails**: Update resume.md with blocker → run **v.whatif** for alternatives → adjust plan.md

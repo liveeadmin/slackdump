@@ -1,0 +1,245 @@
+#pc_20201002_unca_webcastzoom : 
+#pc_20201012_seatechweek_eevent : 
+#pc_20201019_ratp_webevent : 
+#pc_20201120_multicam_streamingframetom : 
+#pc_20201130_stratevent_inli_emissionstudio : 
+#pc_20230522_bdf : 
+#pc_abilways : 
+#pc_absolute_mutavie_20200702 : 
+#pc_academieduservice2022 : 
+#pc_adobequantic : 
+#pc_adoma_eventinterne-vote-stream_20250505 : 
+#pc_adp : Référencement ADP
+#pc_adp2025 : 
+#pc_aeim54_badge-emargement_20221110 : 
+#pc_afd : 
+#pc_afd_051224 : 
+#pc_afd_outremer_webeventcomplexe_20221012 : 
+#pc_afd_soutenabilite_20221207 : 
+#pc_afdcerom20250603 : 
+#pc_ag_fff_20210312_13 : 
+#pc_agencebosphore_cnop_20210408 : 
+#pc_agircarrco : 
+#pc_agrosud_20201022 : 
+#pc_allianzgi : 
+#pc_alpine : 
+#pc_alpine_berlin : 
+#pc_alpine_support : 
+#pc_amcsti_20201201 : 
+#pc_amue_eevent_20210525 : 
+#pc_aphp-dri_seminaires-a-l-international : Dans le cadre d'un appel d'offre.
+#pc_asp : Mise en place d'un nouveau marché public
+#pc_atipic-sanef : Faire le point sur les dev spécifiques du projet
+#pc_atlan_webapp-wellspect2022 : 
+#pc_atlanbestofimplantology : webapp avec systeme d'inscription + paiement weezevent
+#pc_auchan : 
+#pc_auchan-live : Support pour la pleiniére
+#pc_automation : commencer une ou plusieurs actions en utilisant l'automation
+#pc_ayming_2024 : 
+#pc_b2v_20201217 : 
+#pc_b2v_webevent_14062022 : 
+#pc_bang-bang-loreal : 
+#pc_banquedefrance : 
+#pc_banquedesterritoires_mltv : 
+#pc_banquepostale_20200924 : 
+#pc_bdf_221216 : 
+#pc_bestofdentistry_20240615 : 
+#pc_bosphore_merz_20210717 : 
+#pc_bpce : 
+#pc_bpce_20200111_voeux-president : 
+#pc_bpce_20210126_voeux-itce : 
+#pc_bpce_poc : 
+#pc_caf31 : 
+#pc_caisses_depargne : discussion sur la réalisation de pilotes pour les caisses d'épargne
+#pc_cdc : 
+#pc_cdc-bdt_comissairesdejustice_20220908 : 
+#pc_cdc-drs-20201012-13 : Projet CDC DRS (Direction Retraites, équipe Luc Gerbore)
+#pc_cdc-drs-20210929 : 
+#pc_cdc-habitat_20220407_boiteaquestion : 
+#pc_cdc-tchatcomex20201014 : Projet cdc Tchat DG du 6 oct dans le bureau de Sophie, avec sous-titrage
+#pc_cdc20200408 : 
+#pc_cdc20200616 : 
+#pc_cdc20200626 : Live tchat vidéo à l'instar de la presta du 16/6 pour Banque des Territoires. La cible change : 300 collaborateurs.
+#pc_cdc20200907_planderelance : Conférence de presse Eric Lombard
+#pc_cdc20201007 : Projet CDC DRS (projet handicap reporté)
+#pc_cdc2020101213 : 
+#pc_cdc20201014_tchat-dg : Tchat vidéo DG du 14/10
+#pc_cdc20201201-convention-drh : 
+#pc_cdc20210128_voeux-icdc : 
+#pc_cdc20210318_bdt_printemps-des-territoires : 
+#pc_cdc_comex_20210331-et-20210401 : econf spécial Résultats (ndi) à destination des cadres dirigeant, le 31 mars et à destination de la presse le 1er avril 2021
+#pc_cdc_dps_tchatvideo_20230131 : 
+#pc_cdc_dps_webcastduplex : 
+#pc_cdc_drs_liveecase_20210317 : 
+#pc_cdc_drs_tchatvideo_20210629 : Tchat CDC DRS &gt; à l'identique (ou presque  de celui du 02 fev 2021)
+#pc_cdc_habitat : 
+#pc_cdc_habitat_20210408 : Tchat vidéo "Bulle de questions" avec Anne-Sophie Grave
+#pc_cdc_tchat_dg : 
+#pc_cdc_tchatvideo_20210202 : 
+#pc_cdchabitat_20201217_boiteaquestion : 
+#pc_cdchabitat_p2p : 
+#pc_cdchabitat_tchatasg : 
+#pc_cdchabitat_tchatasg_20240328 : 
+#pc_cdchabitat_voeux20240116 : Cible: 8000
+Durée 1H
+Diffusion le 16 janvier 2023 aux alentours de 15H
+#pc_cdchabitatadoma_p2p : 
+#pc_cegedimsante : 
+#pc_ceidf : 
+#pc_ceidf-digital_expresso3_20210121 : 
+#pc_ceidf_ag_20200629 : 
+#pc_ceidf_conf-metiers20210929 : 
+#pc_ceidf_eevent_9dec2020 : 
+#pc_ceidf_marchebdr_20210112 : <https://docs.google.com/spreadsheets/d/1n9waZ2hLwpNNox4hSSznptlFRxgL12cEdP7cCpqfuj0/edit#gid=1469716368>
+#pc_celda : 
+#pc_centreinffo_20211130 : 
+#pc_cestfortdecafe : config compte cestfortdecafe
+#pc_cjcom_2021121415 : 
+#pc_cnaf2020 : 
+#pc_cnam_2021111518 : 
+#pc_cnb-ag-demat-20201113 : projet Conseil National du Barreau
+#pc_cnb_ag : 
+#pc_cnb_e-debats : 
+#pc_cnbentretiens20200428 : Série de webcast interactifs avec zoom
+#pc_cnbentretiens20200504 : Live CNB du 4 mai
+#pc_cnbf20200429 : 
+#pc_cnbf20200626 : 
+#pc_cniel : Webconférence Youtube CNIEL du 21/03
+#pc_cnp20200416 : 
+#pc_cnp20200421 : 
+#pc_cnp20200428 : 
+#pc_commandeslivee : echanges sur des dépenses commandes factures fournisseurs pour Livee ou les projets Livee
+#pc_compagnonsdudevoir : 
+#pc_comptalivee : 
+#pc_convention_prestashop : 
+#pc_convives_yvesrocher : 
+#pc_crcc20200707 : Projet 7 Juillet - Compagnie Régionale des Commissaires aux Comptes de Paris
+#pc_creditcooperatif : 
+#pc_creditcooperatif_20210312 : 
+#pc_delessert : 
+#pc_dell : projet DELL
+#pc_demandes_spe : Permet de remonter les futurs projets clients spécifiques et que les commerciaux formalisent leur besoin
+#pc_devoteam : 
+#pc_digitimmo : 
+#pc_ebp : 
+#pc_edf_referencement : Garder un suivi des actions lancées pour le référencement EDF/ ENEDIS
+#pc_ejco_2021-03-09-10-11 : Compte Client plateforme : ejco
+
+ggsheet : <https://docs.google.com/spreadsheets/d/1R5779iafOAP_V8pVOXEEFXgVLmqN6emlwvavxUrblUA/edit>
+#pc_elb_20201124 : 
+#pc_engie : Plateforme Youtube-Like
+#pc_enpersonne : projet En Personne
+#pc_epimar : 
+#pc_evav1 : 
+#pc_generationopera_vote_20231008 : 
+#pc_gensevenement_manitou_20240626 : 
+#pc_gl_events : partenariat avec GL Events
+#pc_gmf-maaf-mma_e-conferences : 
+#pc_godf : 
+#pc_grenoble-em_20210410-mur-twitter : 
+#pc_grtgaz : 
+#pc_grtgaz_20201202 : 
+#pc_hceres_20220316_webcastzoom : 
+#pc_human_npartners : 
+#pc_hwi-bquepop : 
+#pc_hwi-event_20211103 : 
+#pc_hyblab_partenariat : 
+#pc_iacf20200505 : 
+#pc_iacf2020052728 : 
+#pc_iacf20200702 : CA + AG
+#pc_ibp : 
+#pc_ideastorm_20210520_diffusion-pour-framatome : 
+#pc_idena : 
+#pc_idheo_eevent20220311 : 
+#pc_ifppc_20211123 : 
+#pc_ifppc_231121 : 
+#pc_ign : Organisation de la réponse à l'appel d'offre IGN : dépot avant le 07/05/2019
+#pc_ign2023 : 
+#pc_ign_jr : 
+#pc_ign_jr2020_05102020 : IGN E-event Journées de la recherche 2020 du 5 oct au 9 Oct 2020
+#pc_ineris_20231205 : 
+#pc_ing_direct : projet de live ing direct
+#pc_innov_dpam : 
+#pc_innov_reflexologues_20210424 : E-event bilingue :fr: :uk:
+#pc_innov_traceone : 
+#pc_innovationday20240425 : \\Shared Team LiveE\Dossiers Publics\ChatConference LiveE\0 Entreprises\clients actifs\RATP - URBAN STATION
+#pc_innovevents_traceone : 
+#pc_janssen-jmc : Projet <https://www.janssenmedicalcloud.fr/>
+#pc_janssen_interact : projet de Direction technique Janssen Interaction Healthcare
+#pc_karma_projetric20231012 : 
+#pc_karma_projets2023 : 
+#pc_lemonde20200429 : 
+#pc_leongrosse : 
+#pc_lesechos : 
+#pc_loreal : 
+#pc_loreal_20210302 : 
+#pc_macdo_2020092425 : 
+#pc_macdo_reunions_digitalisees : 
+#pc_mandrego-20201007 : Pour le client Autodistribution
+#pc_mandrego-aptar : Projet webcast duplex 2 oct avec realisation teams
+#pc_mars : 
+#pc_mcd : Labo Merck
+#pc_mcdo_20201120 : 
+#pc_mcdo_2021030890 : 
+#pc_mcdo_20210318 : 
+#pc_mcdonalds : Chaîne pour compiler les infos techniques du projet Mc Donald's du 27 02 2020. :slightly_smiling_face:
+#pc_merz : 
+#pc_michelin_diffusioninternationale_avril2025 : 
+#pc_msa_webinar : 
+#pc_multiplex-systra : Echanges projet systra
+#pc_mundipharma : Canal pour papoter de la mise en ligne de la plateforme VOD Mundimeeting pour Mundipharma :slightly_smiling_face:
+#pc_mymoneybank_202011 : 
+#pc_natixis : 
+#pc_natixis_20240627 : 
+#pc_novelty : partenariat avec Novelty
+#pc_odigoletsgo_20220125 : 
+#pc_ogf2020 : Chaîne pour discuter du projet OGF (service funéraire)
+#pc_onf_20210318 : 
+#pc_onisep : 
+#pc_oresys_20210129 : 
+#pc_ovh : Outil webinar
+#pc_parisfantastic : Projet Live en Chine avec Paris Fantastic
+#pc_petitbateau : 
+#pc_petitbateau202312 : 
+#pc_precom_plateformeportesouvertes : 
+#pc_proprietesprivees : 
+#pc_psl_20220521-23-24_e-event : 
+#pc_ptolemee_rbm2025_20251002 : 
+#pc_public-adress-leroymelin : 
+#pc_pwc : 
+#pc_pwc_avocat_opci_221212 : 
+#pc_pwc_avocats : 
+#pc_pwc_onefirm_20230126 : 
+#pc_pwcdays_20211007 : 
+#pc_raja_20201204 : 
+#pc_ratp20201009 : 
+#pc_ratp_20201105_mandy : 
+#pc_ratpfinance_20211119 : 
+#pc_regieatem : 
+#pc_sanoflore : 
+#pc_semainecnb : 
+#pc_sephora_20200121 : 
+#pc_snof_20231125 : 
+#pc_socialwall : 
+#pc_socialy_20201125 : Plateforme VOD e-event
+#pc_spie : 426613 One SPIE Network - Convention 2017
+#pc_spif_20211120 : 
+#pc_stgobain : e-event fr/en
+#pc_suez17 : 
+#pc_supderh_20220408 : 
+#pc_tecaliman_2021061314 : 
+#pc_tereva : 
+#pc_total : Total
+#pc_ugap_20201202 : 
+#pc_ugap_20221125 : 
+#pc_ugap_tchattexte_video_20210518 : 
+#pc_venise_loreal_beautyst_20201125 : Projet très complexe et sur Mesure suite aux recommandation des achats de l'Oréal
+#pc_venise_loreal_beautystore2022 : 
+#pc_vicat : 
+#pc_vinci : 
+#pc_wat_plasticomnium_20200209 : 
+#pc_wellspect : 
+#pc_whitelab_laccoustics_webapp_20240917 : session : 803681
+Compte : l-acoustics
+#pc_wrpproduction : module tchat + mur questions modérées
+#pc_zimvie : 
